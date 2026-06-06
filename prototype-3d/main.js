@@ -14,6 +14,7 @@
 // Still a feel test. Three.js loads from a CDN so it runs from a plain link.
 
 import * as THREE from 'three';
+import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
 
 const canvas = document.getElementById('c');
 const hint = document.getElementById('hint');
@@ -312,6 +313,56 @@ hero.position.set(0, 0, 16);
 hero.rotation.y = Math.PI;
 scene.add(hero);
 hero.traverse((o) => (o.userData.noAim = true)); // don't aim at ourselves
+
+// --- Realistic hero model (downloaded, rigged + animated) -------------------
+// A real textured/rigged human replaces the capsule once loaded. This is a
+// three.js example asset (Mixamo-derived) used as a prototype placeholder; a
+// properly-licensed/commissioned model would replace it for release.
+const MODEL_YAW_OFFSET = 0; // flip to Math.PI if the model faces backward
+let heroModel = null;
+let mixer = null;
+let actIdle = null;
+let actMove = null;
+let curAction = null;
+
+new GLTFLoader().load('./models/Soldier.glb', (gltf) => {
+  heroModel = gltf.scene;
+  heroModel.traverse((o) => {
+    o.userData.noAim = true;
+    if (o.isMesh) {
+      o.castShadow = true;
+      o.frustumCulled = false;
+    }
+  });
+  // Scale to ~1.85 units tall and stand its feet on the ground.
+  let box = new THREE.Box3().setFromObject(heroModel);
+  heroModel.scale.setScalar(1.85 / (box.max.y - box.min.y || 1));
+  box = new THREE.Box3().setFromObject(heroModel);
+  heroModel.position.y = -box.min.y;
+  heroModel.rotation.y = MODEL_YAW_OFFSET;
+  hero.add(heroModel);
+  heroBody.visible = false; // hide the capsule
+
+  // Idle / run animations, crossfaded by movement.
+  mixer = new THREE.AnimationMixer(heroModel);
+  const find = (re) => gltf.animations.find((a) => re.test(a.name));
+  actIdle = mixer.clipAction(find(/idle/i) || gltf.animations[0]);
+  actMove = mixer.clipAction(find(/run/i) || find(/walk/i) || gltf.animations[0]);
+  actIdle.play();
+  curAction = actIdle;
+});
+
+function setMoving(moving) {
+  if (!mixer || !actMove || !actIdle) return;
+  const to = moving ? actMove : actIdle;
+  if (curAction === to) return;
+  to.reset();
+  to.enabled = true;
+  to.setEffectiveWeight(1);
+  to.crossFadeFrom(curAction, 0.2, false);
+  to.play();
+  curAction = to;
+}
 
 // --- Camera control ---------------------------------------------------------
 let yaw = 0;
@@ -707,10 +758,20 @@ function update(dt) {
     vy = 0;
   }
 
+  // Drive the model's idle/run animation from movement.
+  if (mixer) {
+    setMoving(move.lengthSq() > 0 && hero.position.y <= groundY + 0.05);
+    mixer.update(dt);
+  }
+
   // Camera: over-the-shoulder in third person, eyes in first person.
-  // Hide the body in first person but keep the sword visible (FPS weapon view)
-  // so the swing still reads.
-  heroBody.visible = !firstPerson;
+  // Hide the body in first person; keep the sword visible (FPS weapon view).
+  if (heroModel) {
+    heroBody.visible = false;
+    heroModel.visible = !firstPerson;
+  } else {
+    heroBody.visible = !firstPerson;
+  }
   const eye = new THREE.Vector3(hero.position.x, hero.position.y + EYE_H, hero.position.z);
   if (firstPerson) {
     camera.position.copy(eye);
