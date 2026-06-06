@@ -37,7 +37,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0b12);
 scene.fog = new THREE.Fog(0x0a0b12, 26, 70);
 
-const camera = new THREE.PerspectiveCamera(62, 1, 0.05, 500);
+const camera = new THREE.PerspectiveCamera(74, 1, 0.05, 500);
 
 // --- Lighting ---------------------------------------------------------------
 scene.add(new THREE.HemisphereLight(0x4a5270, 0x101018, 0.55));
@@ -66,8 +66,35 @@ ceilingLamp(8, 0xfff0d0, 7);
 ceilingLamp(-17, 0xffe0c0, 6); // over the throne
 
 // --- Materials --------------------------------------------------------------
-const stone = new THREE.MeshStandardMaterial({ color: 0x2b2d36, roughness: 0.95 });
-const darkStone = new THREE.MeshStandardMaterial({ color: 0x1c1e26, roughness: 1 });
+const stone = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 });
+const darkStone = new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 1 });
+const marble = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7 });
+
+// CC0 PBR textures (ambientCG): walls = stone bricks, columns = marble,
+// throne/ceiling = rough rock. Loaded async and tiled; the knotwork floor
+// stays procedural.
+const texLoader = new THREE.TextureLoader();
+function loadPBR(dir, repeatX, repeatY) {
+  const color = texLoader.load(`./textures/${dir}/color.jpg`);
+  color.colorSpace = THREE.SRGBColorSpace;
+  const normal = texLoader.load(`./textures/${dir}/normal.jpg`);
+  const rough = texLoader.load(`./textures/${dir}/rough.jpg`);
+  for (const t of [color, normal, rough]) {
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(repeatX, repeatY);
+    t.anisotropy = 8;
+  }
+  return { color, normal, rough };
+}
+function applyPBR(mat, set) {
+  mat.map = set.color;
+  mat.normalMap = set.normal;
+  mat.roughnessMap = set.rough;
+  mat.needsUpdate = true;
+}
+applyPBR(stone, loadPBR('wall', 4, 3));
+applyPBR(darkStone, loadPBR('dark', 5, 5));
+applyPBR(marble, loadPBR('column', 2, 4));
 
 // --- Collision data ---------------------------------------------------------
 // Two kinds of solids, both height-aware: you're blocked on the sides only when
@@ -130,7 +157,7 @@ addPanels(ROOM_W / 2 - 0.55, -Math.PI / 2);
 // --- Columns (tall: block, can't be climbed) --------------------------------
 const COL_R = 1.0;
 function addColumn(x, z) {
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(COL_R, COL_R, 12, 16), stone);
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(COL_R, COL_R, 12, 16), marble);
   shaft.position.set(x, 6, z);
   shaft.castShadow = true;
   shaft.receiveShadow = true;
@@ -256,6 +283,7 @@ dBarFill.position.z = 0.001;
 dummyBar.add(dBarBg, dBarFill);
 dummyBar.renderOrder = 5;
 scene.add(dummyBar);
+dummyBar.traverse((o) => (o.userData.noAim = true));
 
 // --- Hero (with a sword on a pivot for the melee swing) ---------------------
 const hero = new THREE.Group();
@@ -283,6 +311,7 @@ hero.add(swordPivot);
 hero.position.set(0, 0, 16);
 hero.rotation.y = Math.PI;
 scene.add(hero);
+hero.traverse((o) => (o.userData.noAim = true)); // don't aim at ourselves
 
 // --- Camera control ---------------------------------------------------------
 let yaw = 0;
@@ -312,18 +341,23 @@ let rightHeld = false;
 addEventListener('contextmenu', (e) => e.preventDefault());
 document.addEventListener('mousedown', (e) => {
   if (!started) {
+    if (e.button === 0) enter();
+    return;
+  }
+  // Mouse not captured (e.g. after pressing Esc): a click re-captures it.
+  // (Browsers enforce a ~1s cooldown after Esc, so a second click may be
+  // needed; drag-look works in the meantime.)
+  if (!locked) {
     if (e.button === 0) {
-      enter();
-      dragging = true;
+      const p = canvas.requestPointerLock?.();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+      dragging = true; // fallback if pointer lock is unavailable
     }
     return;
   }
-  if (e.button === 0) {
-    if (locked) leftHeld = true;
-    else dragging = true; // drag-look fallback
-  } else if (e.button === 2) {
-    rightHeld = true;
-  }
+  // Captured: left = melee, right = ranged.
+  if (e.button === 0) leftHeld = true;
+  else if (e.button === 2) rightHeld = true;
 });
 document.addEventListener('mouseup', (e) => {
   if (e.button === 0) {
@@ -339,8 +373,8 @@ document.addEventListener('pointerlockchange', () => {
 document.addEventListener('mousemove', (e) => {
   if (!started || (!locked && !dragging)) return;
   yaw -= e.movementX * SENS;
-  pitch -= e.movementY * SENS;
-  pitch = Math.max(-0.05, Math.min(1.15, pitch));
+  pitch += e.movementY * SENS; // mouse up -> look up (non-inverted)
+  pitch = Math.max(-0.7, Math.min(1.2, pitch)); // allow aiming well above the head
 });
 addEventListener(
   'wheel',
@@ -409,15 +443,27 @@ function doMelee() {
   }
 }
 
+// Where the crosshair actually points in the world: the nearest real surface
+// the camera-center ray hits (dummy, walls, floor...), else a far point.
+function computeAimTarget() {
+  _ray.setFromCamera(_center, camera);
+  const hits = _ray.intersectObjects(scene.children, true);
+  for (const h of hits) {
+    if (h.object.userData.noAim || h.distance < 0.4) continue;
+    return h.point;
+  }
+  return _ray.ray.origin.clone().addScaledVector(_ray.ray.direction, 40);
+}
+
 function doRanged() {
   if (rangedCd > 0 || !started) return;
   rangedCd = RANGED_CD;
-  _ray.setFromCamera(_center, camera);
-  const target = _ray.ray.origin.clone().addScaledVector(_ray.ray.direction, 30);
+  const target = computeAimTarget();
   const from = new THREE.Vector3(hero.position.x, hero.position.y + 1.0, hero.position.z);
   const vel = target.sub(from).normalize().multiplyScalar(PROJ_SPEED);
   const mesh = new THREE.Mesh(boltGeo, boltMat);
   mesh.position.copy(from);
+  mesh.userData.noAim = true;
   scene.add(mesh);
   projectiles.push({ mesh, vel, life: 1.4 });
   spark(from, 3, 0x9fe8ff, 80);
@@ -430,6 +476,7 @@ function spark(pos, count, color, speed = 140) {
     m.scale.setScalar(0.5);
     m.position.copy(pos);
     m.position.y += 0.2;
+    m.userData.noAim = true;
     const a = Math.random() * Math.PI * 2;
     const up = Math.random() * 0.6 + 0.2;
     scene.add(m);
@@ -460,6 +507,7 @@ function spawnNumber(pos, val) {
   );
   sp.position.copy(pos);
   sp.scale.set(1.5, 0.75, 1);
+  sp.userData.noAim = true;
   scene.add(sp);
   floatTexts.push({ sp, life: 0.8, max: 0.8 });
 }
@@ -660,8 +708,9 @@ function update(dt) {
   }
 
   // Camera: over-the-shoulder in third person, eyes in first person.
+  // Hide the body in first person but keep the sword visible (FPS weapon view)
+  // so the swing still reads.
   heroBody.visible = !firstPerson;
-  swordPivot.visible = !firstPerson;
   const eye = new THREE.Vector3(hero.position.x, hero.position.y + EYE_H, hero.position.z);
   if (firstPerson) {
     camera.position.copy(eye);
