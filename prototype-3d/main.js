@@ -320,10 +320,20 @@ hero.traverse((o) => (o.userData.noAim = true)); // don't aim at ourselves
 // Otherwise we fall back to the bundled Soldier.glb (with its own animations).
 const MODEL_YAW_OFFSET = Math.PI; // flip if the model faces backward
 let heroModel = null;
+let heroNaturalHeight = 1;
 let mixer = null;
 let actIdle = null;
 let actMove = null;
 let curAction = null;
+
+// Re-apply the live-tunable scale + facing to the loaded model.
+function rescaleHero() {
+  if (!heroModel) return;
+  heroModel.scale.setScalar(tune.scale / heroNaturalHeight);
+  const box = new THREE.Box3().setFromObject(heroModel);
+  heroModel.position.y = -box.min.y; // feet on the floor
+  heroModel.rotation.y = (tune.yaw * Math.PI) / 180;
+}
 
 function setupHeroModel(sceneRoot) {
   heroModel = sceneRoot;
@@ -334,13 +344,11 @@ function setupHeroModel(sceneRoot) {
       o.frustumCulled = false;
     }
   });
-  // Scale to ~1.5 units tall and stand its feet on the ground.
-  let box = new THREE.Box3().setFromObject(heroModel);
-  heroModel.scale.setScalar(1.5 / (box.max.y - box.min.y || 1));
-  box = new THREE.Box3().setFromObject(heroModel);
-  heroModel.position.y = -box.min.y;
-  heroModel.rotation.y = MODEL_YAW_OFFSET;
+  heroModel.scale.setScalar(1);
+  const box = new THREE.Box3().setFromObject(heroModel);
+  heroNaturalHeight = box.max.y - box.min.y || 1;
   hero.add(heroModel);
+  rescaleHero();
   heroBody.visible = false; // hide the capsule
   mixer = new THREE.AnimationMixer(heroModel);
 }
@@ -423,14 +431,33 @@ function setMoving(moving) {
   curAction = to;
 }
 
+// --- Tunable parameters (live-editable via the on-screen panel) -------------
+// Persisted to localStorage so your adjustments survive a reload.
+const TUNE_KEY = 'bossraid.tune.v1';
+const tune = Object.assign(
+  { scale: 1.3, camDist: 12, eyeH: 1.55, shoulder: 0.8, fov: 74, yaw: 180 },
+  (() => {
+    try {
+      return JSON.parse(localStorage.getItem(TUNE_KEY) || '{}');
+    } catch {
+      return {};
+    }
+  })()
+);
+function saveTune() {
+  try {
+    localStorage.setItem(TUNE_KEY, JSON.stringify(tune));
+  } catch {
+    /* ignore */
+  }
+}
+
 // --- Camera control ---------------------------------------------------------
 let yaw = 0;
 let pitch = 0.42;
 const SENS = 0.0026;
-let camDist = 12.0;
+let camDist = tune.camDist;
 let firstPerson = false;
-const SHOULDER = 0.8;
-const EYE_H = 1.55;
 
 let locked = false;
 let dragging = false;
@@ -492,6 +519,9 @@ addEventListener(
     if (!started) return;
     camDist = Math.max(0, Math.min(18, camDist + Math.sign(e.deltaY) * 0.8));
     firstPerson = camDist < 1.2;
+    tune.camDist = camDist;
+    saveTune();
+    syncTunerInputs();
     e.preventDefault();
   },
   { passive: false }
@@ -831,12 +861,12 @@ function update(dt) {
   } else {
     heroBody.visible = !firstPerson;
   }
-  const eye = new THREE.Vector3(hero.position.x, hero.position.y + EYE_H, hero.position.z);
+  const eye = new THREE.Vector3(hero.position.x, hero.position.y + tune.eyeH, hero.position.z);
   if (firstPerson) {
     camera.position.copy(eye);
     camera.lookAt(eye.clone().sub(dir));
   } else {
-    const anchor = eye.add(right.clone().multiplyScalar(SHOULDER));
+    const anchor = eye.add(right.clone().multiplyScalar(tune.shoulder));
     camera.position.copy(anchor).addScaledVector(dir, camDist);
     camera.lookAt(anchor);
   }
@@ -930,6 +960,66 @@ function resize() {
 }
 addEventListener('resize', resize);
 resize();
+
+// --- Live tuning panel ------------------------------------------------------
+// Lets you dial in character scale + camera live and read the values back, so
+// adjustments are exact (no guessing). Values persist in localStorage.
+const tunerInputs = {
+  scale: document.getElementById('t-scale'),
+  camDist: document.getElementById('t-cam'),
+  eyeH: document.getElementById('t-eye'),
+  shoulder: document.getElementById('t-shoulder'),
+  fov: document.getElementById('t-fov'),
+  yaw: document.getElementById('t-yaw'),
+};
+const tunerReadout = document.getElementById('t-readout');
+
+function applyTune() {
+  camDist = tune.camDist;
+  camera.fov = tune.fov;
+  camera.updateProjectionMatrix();
+  rescaleHero();
+}
+function updateReadout() {
+  if (!tunerReadout) return;
+  tunerReadout.textContent =
+    `scale ${(+tune.scale).toFixed(2)} · cam ${(+tune.camDist).toFixed(1)} · ` +
+    `eye ${(+tune.eyeH).toFixed(2)} · shoulder ${(+tune.shoulder).toFixed(2)} · ` +
+    `fov ${Math.round(tune.fov)} · yaw ${Math.round(tune.yaw)}`;
+}
+function syncTunerInputs() {
+  for (const k in tunerInputs) {
+    if (tunerInputs[k]) tunerInputs[k].value = tune[k];
+  }
+  updateReadout();
+}
+function setupTuner() {
+  for (const k in tunerInputs) {
+    const el = tunerInputs[k];
+    if (!el) continue;
+    el.addEventListener('input', () => {
+      tune[k] = parseFloat(el.value);
+      applyTune();
+      saveTune();
+      updateReadout();
+    });
+  }
+  const reset = document.getElementById('t-reset');
+  if (reset)
+    reset.addEventListener('click', () => {
+      Object.assign(tune, { scale: 1.3, camDist: 12, eyeH: 1.55, shoulder: 0.8, fov: 74, yaw: 180 });
+      applyTune();
+      saveTune();
+      syncTunerInputs();
+    });
+  const toggle = document.getElementById('t-toggle');
+  const panel = document.getElementById('tune');
+  if (toggle && panel)
+    toggle.addEventListener('click', () => panel.classList.toggle('collapsed'));
+  syncTunerInputs();
+  applyTune();
+}
+setupTuner();
 
 renderer.setAnimationLoop(() => {
   const dt = Math.min(0.05, clock.getDelta());
