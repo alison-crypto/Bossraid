@@ -318,7 +318,7 @@ hero.traverse((o) => (o.userData.noAim = true)); // don't aim at ourselves
 // A real textured/rigged human replaces the capsule once loaded. This is a
 // three.js example asset (Mixamo-derived) used as a prototype placeholder; a
 // properly-licensed/commissioned model would replace it for release.
-const MODEL_YAW_OFFSET = 0; // flip to Math.PI if the model faces backward
+const MODEL_YAW_OFFSET = Math.PI; // model faces +Z by default; flip to face movement
 let heroModel = null;
 let mixer = null;
 let actIdle = null;
@@ -336,7 +336,7 @@ new GLTFLoader().load('./models/Soldier.glb', (gltf) => {
   });
   // Scale to ~1.85 units tall and stand its feet on the ground.
   let box = new THREE.Box3().setFromObject(heroModel);
-  heroModel.scale.setScalar(1.85 / (box.max.y - box.min.y || 1));
+  heroModel.scale.setScalar(1.72 / (box.max.y - box.min.y || 1));
   box = new THREE.Box3().setFromObject(heroModel);
   heroModel.position.y = -box.min.y;
   heroModel.rotation.y = MODEL_YAW_OFFSET;
@@ -368,7 +368,7 @@ function setMoving(moving) {
 let yaw = 0;
 let pitch = 0.42;
 const SENS = 0.0026;
-let camDist = 7.0;
+let camDist = 9.0;
 let firstPerson = false;
 const SHOULDER = 0.8;
 const EYE_H = 1.55;
@@ -431,7 +431,7 @@ addEventListener(
   'wheel',
   (e) => {
     if (!started) return;
-    camDist = Math.max(0, Math.min(11, camDist + Math.sign(e.deltaY) * 0.8));
+    camDist = Math.max(0, Math.min(14, camDist + Math.sign(e.deltaY) * 0.8));
     firstPerson = camDist < 1.2;
     e.preventDefault();
   },
