@@ -1,0 +1,28 @@
+{
+  "name": "bossraid",
+  "version": "0.1.0",
+  "description": "A browser-based, single-player boss-raid action game. Pure HTML5 Canvas + vanilla JS.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "keywords": [
+    "game",
+    "canvas",
+    "boss",
+    "action"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "eslint": "^9.13.0",
+    "prettier": "^3.3.3",
+    "vite": "^5.4.10",
+    "vitest": "^2.1.4"
+  }
+}
