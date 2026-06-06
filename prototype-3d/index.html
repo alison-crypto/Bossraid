@@ -47,8 +47,9 @@
       #tune .trow input[type=range] { flex: 1; accent-color: #5ec8ff; }
       #t-readout { margin-top: 8px; padding: 6px; background: #0c0e16; border-radius: 6px;
         color: #8fe; font-size: 11px; line-height: 1.5; word-break: break-word; user-select: all; }
-      #t-reset { margin-top: 8px; width: 100%; padding: 6px; border: none; border-radius: 6px;
+      #t-reset, #t-copy { margin-top: 8px; padding: 6px; border: none; border-radius: 6px;
         background: #232a3d; color: #cdd5e6; cursor: pointer; font: inherit; }
+      #t-copy:hover, #t-reset:hover { background: #2d3650; }
     </style>
   </head>
   <body>
@@ -63,7 +64,7 @@
       </div>
     </div>
     <div id="tune">
-      <header id="t-toggle"><span>⚙ Tune (click to fold)</span></header>
+      <header id="t-toggle"><span>⚙ Tune — press Esc to edit · auto-saves</span></header>
       <div class="body">
         <div class="trow"><label>Char size</label><input type="range" id="t-scale" min="0.6" max="2.6" step="0.05" /></div>
         <div class="trow"><label>Cam dist</label><input type="range" id="t-cam" min="3" max="18" step="0.5" /></div>
@@ -79,7 +80,10 @@
         <div class="trow"><label>Rot Y</label><input type="range" id="t-wry" min="-3.2" max="3.2" step="0.05" /></div>
         <div class="trow"><label>W scale</label><input type="range" id="t-wscale" min="0.3" max="2.5" step="0.05" /></div>
         <div id="t-readout"></div>
-        <button id="t-reset">Reset</button>
+        <div style="display:flex; gap:6px">
+          <button id="t-copy" style="flex:1">Copy values</button>
+          <button id="t-reset" style="flex:1">Reset</button>
+        </div>
       </div>
     </div>
     <div id="hint">
