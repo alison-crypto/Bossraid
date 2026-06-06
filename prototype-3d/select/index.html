@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bossraid — Choose your Character</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d14; color: #e8ecf6;
+        font-family: 'Trebuchet MS', system-ui, sans-serif; }
+      #c { position: fixed; inset: 0; width: 100%; height: 100%; }
+      #panel { position: fixed; top: 0; left: 0; width: 280px; height: 100%; padding: 18px 16px;
+        background: linear-gradient(180deg, rgba(16,18,28,0.95), rgba(12,14,22,0.95));
+        border-right: 1px solid #2a2f42; display: flex; flex-direction: column; }
+      h1 { font-size: 20px; color: #ffd27a; margin: 0 0 2px; }
+      .sub { color: #8b93a7; font-size: 12px; margin-bottom: 16px; }
+      .clist { flex: 1; overflow-y: auto; }
+      .card { padding: 12px; border: 1px solid #2a2f42; border-radius: 8px; margin-bottom: 8px;
+        cursor: pointer; background: #14161f; }
+      .card.active { border-color: #ffcc55; background: #1c2030; }
+      .card .name { font-weight: bold; }
+      .card .meta { font-size: 11px; color: #8b93a7; }
+      #enter { margin-top: 12px; border: none; border-radius: 8px; padding: 12px; font: inherit;
+        font-weight: bold; background: #ffcc55; color: #1a1206; cursor: pointer; }
+      .note { margin-top: 10px; font-size: 11px; color: #6f788e; line-height: 1.5; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="panel">
+      <h1>Choose your Character</h1>
+      <div class="sub">Drag the model to rotate.</div>
+      <div class="clist" id="clist"></div>
+      <button id="enter">Enter the Hall</button>
+      <div class="note">Add more: drop a rigged <b>.glb</b> in <code>models/</code> and add it to
+        <code>characters.js</code>.</div>
+    </div>
+
+    <script type="importmap">
+      { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+    </script>
+    <script type="module" src="./select.js"></script>
+  </body>
+</html>

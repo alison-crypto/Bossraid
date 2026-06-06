@@ -15,6 +15,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
+import { selectedCharacter } from './characters.js';
 
 const canvas = document.getElementById('c');
 const hint = document.getElementById('hint');
@@ -363,61 +364,23 @@ function playClips(idleClip, moveClip) {
   if (moveClip) actMove = mixer.clipAction(moveClip);
 }
 
-function loadSoldier() {
-  new GLTFLoader().load('./models/Soldier.glb', (gltf) => {
-    setupHeroModel(gltf.scene);
-    const find = (re) => gltf.animations.find((a) => re.test(a.name));
-    playClips(find(/idle/i) || gltf.animations[0], find(/run/i) || find(/walk/i));
-  });
-}
-
-const savedAvatarUrl = (() => {
-  try {
-    return localStorage.getItem('bossraid.character.avatarUrl');
-  } catch {
-    return null;
-  }
-})();
-
-if (savedAvatarUrl) {
-  // RPM avatars carry no animations, so we play RPM's own idle/run clips on the
-  // matching rig. The avatar GLB loads from RPM in the browser; if that fails
-  // (e.g. offline), fall back to the bundled Soldier.
+// Load the selected character (from the select screen), using its embedded
+// idle/run animations. Falls back to the Soldier if a model fails to load.
+function loadCharacter(file) {
   new GLTFLoader().load(
-    savedAvatarUrl,
+    `./models/${file}`,
     (gltf) => {
       setupHeroModel(gltf.scene);
-      let idleClip = null;
-      let moveClip = null;
-      let pending = 2;
-      const ready = () => {
-        if (--pending === 0) playClips(idleClip, moveClip);
-      };
-      new GLTFLoader().load(
-        './models/anim/idle.glb',
-        (g) => {
-          idleClip = g.animations[0];
-          ready();
-        },
-        undefined,
-        ready
-      );
-      new GLTFLoader().load(
-        './models/anim/run.glb',
-        (g) => {
-          moveClip = g.animations[0];
-          ready();
-        },
-        undefined,
-        ready
-      );
+      const find = (re) => gltf.animations.find((a) => re.test(a.name));
+      playClips(find(/idle/i) || gltf.animations[0], find(/run|walk/i));
     },
     undefined,
-    () => loadSoldier()
+    () => {
+      if (file !== 'Soldier.glb') loadCharacter('Soldier.glb');
+    }
   );
-} else {
-  loadSoldier();
 }
+loadCharacter(selectedCharacter().file);
 
 function setMoving(moving) {
   if (!mixer || !actMove || !actIdle) return;
