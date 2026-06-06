@@ -333,9 +333,10 @@ let curAction = null;
 function rescaleHero() {
   if (!heroModel) return;
   heroModel.scale.setScalar(tune.scale / heroNaturalHeight);
-  const box = new THREE.Box3().setFromObject(heroModel);
-  heroModel.position.y = -box.min.y; // feet on the floor
   heroModel.rotation.y = (tune.yaw * Math.PI) / 180;
+  heroModel.updateWorldMatrix(true, true);
+  const box = new THREE.Box3().setFromObject(heroModel);
+  heroModel.position.y -= box.min.y - hero.position.y; // feet on the floor
 }
 
 function setupHeroModel(sceneRoot) {
@@ -348,6 +349,7 @@ function setupHeroModel(sceneRoot) {
     }
   });
   heroModel.scale.setScalar(1);
+  heroModel.updateWorldMatrix(true, true); // so nested-transform models measure right
   const box = new THREE.Box3().setFromObject(heroModel);
   heroNaturalHeight = box.max.y - box.min.y || 1;
   hero.add(heroModel);

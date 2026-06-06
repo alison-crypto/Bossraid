@@ -52,13 +52,20 @@ function loadPreview(file) {
     model.traverse((o) => {
       if (o.isMesh) o.castShadow = true;
     });
-    // Normalize height to ~1.8 and stand on the disc.
-    let box = new THREE.Box3().setFromObject(model);
-    model.scale.setScalar(1.8 / (box.max.y - box.min.y || 1));
-    box = new THREE.Box3().setFromObject(model);
-    model.position.y = -box.min.y;
-    current = model;
     turntable.add(model);
+    // Normalize to ~1.8 tall and stand centered on the disc. Update matrices
+    // first so models with nested transforms (Sketchfab/FBX exports) measure right.
+    model.updateWorldMatrix(true, true);
+    let box = new THREE.Box3().setFromObject(model);
+    model.scale.multiplyScalar(1.8 / (box.max.y - box.min.y || 1));
+    model.updateWorldMatrix(true, true);
+    box = new THREE.Box3().setFromObject(model);
+    const c = new THREE.Vector3();
+    box.getCenter(c);
+    model.position.x -= c.x;
+    model.position.z -= c.z;
+    model.position.y -= box.min.y;
+    current = model;
     const idle = gltf.animations.find((a) => /idle/i.test(a.name)) || gltf.animations[0];
     if (idle) {
       mixer = new THREE.AnimationMixer(model);
