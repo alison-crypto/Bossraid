@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bossraid — Character Creation</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d14;
+        color: #e8ecf6; font-family: 'Trebuchet MS', system-ui, sans-serif; }
+      #c { position: fixed; inset: 0; width: 100%; height: 100%; }
+      #panel {
+        position: fixed; top: 0; left: 0; width: 320px; height: 100%;
+        background: linear-gradient(180deg, rgba(16,18,28,0.96), rgba(12,14,22,0.96));
+        border-right: 1px solid #2a2f42; padding: 16px 16px 90px; overflow-y: auto;
+        backdrop-filter: blur(2px);
+      }
+      #panel h1 { font-size: 20px; color: #ffd27a; margin: 0 0 2px; }
+      #panel .sub { color: #8b93a7; font-size: 12px; margin-bottom: 14px; }
+      .group { border-top: 1px solid #232838; padding: 10px 0 4px; }
+      .group h2 { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
+        color: #7f88a0; margin: 0 0 8px; }
+      .row { display: flex; align-items: center; justify-content: space-between; margin: 7px 0; gap: 8px; }
+      .row label { font-size: 13px; color: #c4ccde; flex: 0 0 96px; }
+      .row input[type=range] { flex: 1; accent-color: #5ec8ff; }
+      .row input[type=color] { width: 38px; height: 26px; border: none; background: none; padding: 0; cursor: pointer; }
+      .row select, .row input[type=text] {
+        flex: 1; background: #1a1f30; color: #e8ecf6; border: 1px solid #313a52;
+        border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 13px;
+      }
+      #footer { position: fixed; bottom: 0; left: 0; width: 320px; padding: 12px 16px;
+        background: #0d0f18; border-right: 1px solid #2a2f42; border-top: 1px solid #232838; display: flex; gap: 8px; }
+      button { flex: 1; border: none; border-radius: 8px; padding: 10px; font: inherit;
+        font-weight: bold; cursor: pointer; }
+      .btn-secondary { background: #232a3d; color: #cdd5e6; }
+      .btn-secondary:hover { background: #2d3650; }
+      .btn-primary { background: #ffcc55; color: #1a1206; }
+      .btn-primary:hover { background: #ffd87a; }
+      #hint { position: fixed; right: 16px; bottom: 14px; color: #707a92; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="panel">
+      <h1>Create your hero</h1>
+      <div class="sub">Drag the model to rotate · scroll to zoom</div>
+      <div id="controls"></div>
+    </div>
+    <div id="footer">
+      <button class="btn-secondary" id="randomize">Randomize</button>
+      <button class="btn-primary" id="enter">Save &amp; Enter Hall</button>
+    </div>
+    <div id="hint">Bossraid — character creator (v1)</div>
+
+    <script type="importmap">
+      { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+    </script>
+    <script type="module" src="./creator.js"></script>
+  </body>
+</html>
