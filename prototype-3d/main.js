@@ -478,6 +478,9 @@ let leftHeld = false;
 let rightHeld = false;
 addEventListener('contextmenu', (e) => e.preventDefault());
 document.addEventListener('mousedown', (e) => {
+  // Clicks on the UI panels must not enter the game / re-lock the mouse, so the
+  // Tune sliders are usable after pressing Esc.
+  if (e.target.closest && e.target.closest('#tune, #hud')) return;
   if (!started) {
     if (e.button === 0) enter();
     return;
@@ -1021,6 +1024,14 @@ function setupTuner() {
       updateReadout();
     });
   }
+  const copy = document.getElementById('t-copy');
+  if (copy)
+    copy.addEventListener('click', () => {
+      const text = tunerReadout ? tunerReadout.textContent : '';
+      if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+      copy.textContent = 'Copied!';
+      setTimeout(() => (copy.textContent = 'Copy values'), 1200);
+    });
   const reset = document.getElementById('t-reset');
   if (reset)
     reset.addEventListener('click', () => {
