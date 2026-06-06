@@ -8,12 +8,14 @@ far end with the boss (the Stone Golem) lit from above.
 It's a **feel test** (combat proper comes later), but it now includes:
 
 - **Third- and first-person camera** with a toggle, over-the-shoulder framing.
-- **Over-the-shoulder aiming:** a ground target ring shows where a skill/attack
-  lands in third person; a center crosshair is used in first person.
-- **Height-aware collision:** columns/walls are solid; low blocks are climbable
-  (solid on the sides, but you can jump on top).
-- A **training dummy** in the center with a placeholder bolt attack + hit feedback
-  (flash, sparks, floating damage numbers, regenerating HP bar) to test aim.
+- **FPS-style aiming:** a center crosshair in both views; attacks fire where the
+  crosshair points (in 3D).
+- **Melee + ranged:** left-click swings the sword (close range), right-click
+  fires a bolt. F / R are keyboard equivalents.
+- **Collision from real solids only:** all open floor is walkable; walls, columns,
+  throne and boss block. Low blocks and the dais are climbable (stand on top).
+- A **training dummy** in the center with hit feedback (flash, sparks, floating
+  damage numbers, regenerating HP bar) to test attacks against.
 
 ## Play it (no install)
 
@@ -30,8 +32,9 @@ Or locally: serve the repo root (`python3 -m http.server`) and open
 
 - **Click** to capture the mouse.
 - **WASD** — move (relative to the camera)
-- **Mouse** — look / aim (or **click-drag** if the cursor stays visible)
-- **Click / hold F** — attack (fires toward the aim point)
+- **Mouse** — aim (crosshair); **click-drag** looks if pointer lock is unavailable
+- **Left-click / F** — melee sword swing
+- **Right-click / R** — ranged bolt
 - **V** — toggle first / third person
 - **Mouse wheel** — zoom (all the way in → first person)
 - **Shift** — sprint
