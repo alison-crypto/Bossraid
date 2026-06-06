@@ -34,6 +34,21 @@
       #hint .big { font-size: 26px; color: #ffd27a; margin-bottom: 8px; }
       #hint .sub { font-size: 15px; color: #cdd; line-height: 1.5; }
       #hint.hidden { opacity: 0; pointer-events: none; }
+      /* Live tuning panel */
+      #tune { position: fixed; top: 12px; right: 12px; width: 230px; z-index: 6;
+        background: rgba(14,16,24,0.92); border: 1px solid #2a2f42; border-radius: 8px;
+        font-size: 12px; color: #cdd5e6; }
+      #tune header { display: flex; justify-content: space-between; align-items: center;
+        padding: 8px 10px; cursor: pointer; color: #ffd27a; font-weight: bold; }
+      #tune .body { padding: 4px 10px 10px; }
+      #tune.collapsed .body { display: none; }
+      #tune .trow { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+      #tune .trow label { flex: 0 0 64px; }
+      #tune .trow input[type=range] { flex: 1; accent-color: #5ec8ff; }
+      #t-readout { margin-top: 8px; padding: 6px; background: #0c0e16; border-radius: 6px;
+        color: #8fe; font-size: 11px; line-height: 1.5; word-break: break-word; user-select: all; }
+      #t-reset { margin-top: 8px; width: 100%; padding: 6px; border: none; border-radius: 6px;
+        background: #232a3d; color: #cdd5e6; cursor: pointer; font: inherit; }
     </style>
   </head>
   <body>
@@ -47,13 +62,26 @@
         <b>Shift</b> sprint &nbsp;·&nbsp; <b>Space</b> jump &nbsp;·&nbsp; <b>Esc</b> free mouse
       </div>
     </div>
+    <div id="tune">
+      <header id="t-toggle"><span>⚙ Tune (click to fold)</span></header>
+      <div class="body">
+        <div class="trow"><label>Char size</label><input type="range" id="t-scale" min="0.6" max="2.6" step="0.05" /></div>
+        <div class="trow"><label>Cam dist</label><input type="range" id="t-cam" min="3" max="18" step="0.5" /></div>
+        <div class="trow"><label>Cam height</label><input type="range" id="t-eye" min="0.5" max="3" step="0.05" /></div>
+        <div class="trow"><label>Shoulder</label><input type="range" id="t-shoulder" min="0" max="2" step="0.05" /></div>
+        <div class="trow"><label>FOV</label><input type="range" id="t-fov" min="50" max="100" step="1" /></div>
+        <div class="trow"><label>Facing</label><input type="range" id="t-yaw" min="0" max="270" step="90" /></div>
+        <div id="t-readout"></div>
+        <button id="t-reset">Reset</button>
+      </div>
+    </div>
     <div id="hint">
       <div>
         <div class="big">Click to enter</div>
         <div class="sub">
           Roam the whole hall and test your attacks on the training dummy.<br />
           Aim with the crosshair · <b>left-click</b> melee · <b>right-click</b> ranged · <b>V</b> first person.<br />
-          <a href="./avatar/index.html" style="color: #ffd27a; pointer-events: auto">★ Create your own character (Ready Player Me)</a>
+          <a href="./avatar/index.html" style="color: #8b93a7; pointer-events: auto">Create character (Ready Player Me — needs setup, see notes)</a>
         </div>
       </div>
     </div>
