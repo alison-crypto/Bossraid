@@ -5,12 +5,15 @@ Online: an enclosed stone hall with two rows of columns, a green-and-purple
 knotwork floor runner, glowing stained-glass wall panels, and a throne at the
 far end with the boss (the Stone Golem) lit from above.
 
-It's still a **feel test** — no combat yet — but it now includes the pieces we
-decided to validate before going all-in on 3D:
+It's a **feel test** (combat proper comes later), but it now includes:
 
-- **Third- and first-person camera** with a toggle.
-- An **aim crosshair** + a ground **aim arrow** showing the attack direction.
-- **Solid collision** against the columns, walls, and boss.
+- **Third- and first-person camera** with a toggle, over-the-shoulder framing.
+- **Over-the-shoulder aiming:** a ground target ring shows where a skill/attack
+  lands in third person; a center crosshair is used in first person.
+- **Height-aware collision:** columns/walls are solid; low blocks are climbable
+  (solid on the sides, but you can jump on top).
+- A **training dummy** in the center with a placeholder bolt attack + hit feedback
+  (flash, sparks, floating damage numbers, regenerating HP bar) to test aim.
 
 ## Play it (no install)
 
@@ -27,7 +30,8 @@ Or locally: serve the repo root (`python3 -m http.server`) and open
 
 - **Click** to capture the mouse.
 - **WASD** — move (relative to the camera)
-- **Mouse** — look (or **click-drag** if the cursor stays visible)
+- **Mouse** — look / aim (or **click-drag** if the cursor stays visible)
+- **Click / hold F** — attack (fires toward the aim point)
 - **V** — toggle first / third person
 - **Mouse wheel** — zoom (all the way in → first person)
 - **Shift** — sprint
