@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bossraid — 3D Feel Test</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #0a0e16; font-family: 'Trebuchet MS', system-ui, sans-serif; color: #eef; }
+      #c { display: block; width: 100%; height: 100%; }
+      #hud {
+        position: fixed; left: 16px; top: 14px; pointer-events: none;
+        text-shadow: 0 1px 3px rgba(0,0,0,0.8); line-height: 1.5; font-size: 14px;
+      }
+      #hud h1 { margin: 0 0 4px; font-size: 18px; color: #ffd27a; }
+      #hud .keys { color: #bcd; }
+      #hint {
+        position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+        background: rgba(6,8,14,0.55); cursor: pointer; transition: opacity .3s; z-index: 5;
+      }
+      #hint div { text-align: center; }
+      #hint .big { font-size: 26px; color: #ffd27a; margin-bottom: 8px; }
+      #hint .sub { font-size: 15px; color: #cdd; }
+      #hint.hidden { opacity: 0; pointer-events: none; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="hud">
+      <h1>3D Feel Test</h1>
+      <div class="keys">
+        <b>WASD</b> move &nbsp;·&nbsp; <b>Mouse</b> look &nbsp;·&nbsp;
+        <b>Shift</b> sprint &nbsp;·&nbsp; <b>Space</b> jump &nbsp;·&nbsp; <b>Esc</b> release mouse
+      </div>
+    </div>
+    <div id="hint">
+      <div>
+        <div class="big">Click to enter</div>
+        <div class="sub">Walk around the floating boss platform. This is just a feel test — no combat yet.</div>
+      </div>
+    </div>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+        }
+      }
+    </script>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
