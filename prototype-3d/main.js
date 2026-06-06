@@ -314,19 +314,19 @@ hero.rotation.y = Math.PI;
 scene.add(hero);
 hero.traverse((o) => (o.userData.noAim = true)); // don't aim at ourselves
 
-// --- Realistic hero model (downloaded, rigged + animated) -------------------
-// A real textured/rigged human replaces the capsule once loaded. This is a
-// three.js example asset (Mixamo-derived) used as a prototype placeholder; a
-// properly-licensed/commissioned model would replace it for release.
-const MODEL_YAW_OFFSET = Math.PI; // model faces +Z by default; flip to face movement
+// --- Realistic hero model ---------------------------------------------------
+// If the player created a Ready Player Me avatar (saved by the avatar page) we
+// load THAT as the hero and animate it with RPM-compatible idle/run clips.
+// Otherwise we fall back to the bundled Soldier.glb (with its own animations).
+const MODEL_YAW_OFFSET = Math.PI; // flip if the model faces backward
 let heroModel = null;
 let mixer = null;
 let actIdle = null;
 let actMove = null;
 let curAction = null;
 
-new GLTFLoader().load('./models/Soldier.glb', (gltf) => {
-  heroModel = gltf.scene;
+function setupHeroModel(sceneRoot) {
+  heroModel = sceneRoot;
   heroModel.traverse((o) => {
     o.userData.noAim = true;
     if (o.isMesh) {
@@ -334,23 +334,82 @@ new GLTFLoader().load('./models/Soldier.glb', (gltf) => {
       o.frustumCulled = false;
     }
   });
-  // Scale to ~1.85 units tall and stand its feet on the ground.
+  // Scale to ~1.5 units tall and stand its feet on the ground.
   let box = new THREE.Box3().setFromObject(heroModel);
-  heroModel.scale.setScalar(1.72 / (box.max.y - box.min.y || 1));
+  heroModel.scale.setScalar(1.5 / (box.max.y - box.min.y || 1));
   box = new THREE.Box3().setFromObject(heroModel);
   heroModel.position.y = -box.min.y;
   heroModel.rotation.y = MODEL_YAW_OFFSET;
   hero.add(heroModel);
   heroBody.visible = false; // hide the capsule
-
-  // Idle / run animations, crossfaded by movement.
   mixer = new THREE.AnimationMixer(heroModel);
-  const find = (re) => gltf.animations.find((a) => re.test(a.name));
-  actIdle = mixer.clipAction(find(/idle/i) || gltf.animations[0]);
-  actMove = mixer.clipAction(find(/run/i) || find(/walk/i) || gltf.animations[0]);
-  actIdle.play();
-  curAction = actIdle;
-});
+}
+
+function playClips(idleClip, moveClip) {
+  if (!mixer) return;
+  if (idleClip) {
+    actIdle = mixer.clipAction(idleClip);
+    actIdle.play();
+    curAction = actIdle;
+  }
+  if (moveClip) actMove = mixer.clipAction(moveClip);
+}
+
+function loadSoldier() {
+  new GLTFLoader().load('./models/Soldier.glb', (gltf) => {
+    setupHeroModel(gltf.scene);
+    const find = (re) => gltf.animations.find((a) => re.test(a.name));
+    playClips(find(/idle/i) || gltf.animations[0], find(/run/i) || find(/walk/i));
+  });
+}
+
+const savedAvatarUrl = (() => {
+  try {
+    return localStorage.getItem('bossraid.character.avatarUrl');
+  } catch {
+    return null;
+  }
+})();
+
+if (savedAvatarUrl) {
+  // RPM avatars carry no animations, so we play RPM's own idle/run clips on the
+  // matching rig. The avatar GLB loads from RPM in the browser; if that fails
+  // (e.g. offline), fall back to the bundled Soldier.
+  new GLTFLoader().load(
+    savedAvatarUrl,
+    (gltf) => {
+      setupHeroModel(gltf.scene);
+      let idleClip = null;
+      let moveClip = null;
+      let pending = 2;
+      const ready = () => {
+        if (--pending === 0) playClips(idleClip, moveClip);
+      };
+      new GLTFLoader().load(
+        './models/anim/idle.glb',
+        (g) => {
+          idleClip = g.animations[0];
+          ready();
+        },
+        undefined,
+        ready
+      );
+      new GLTFLoader().load(
+        './models/anim/run.glb',
+        (g) => {
+          moveClip = g.animations[0];
+          ready();
+        },
+        undefined,
+        ready
+      );
+    },
+    undefined,
+    () => loadSoldier()
+  );
+} else {
+  loadSoldier();
+}
 
 function setMoving(moving) {
   if (!mixer || !actMove || !actIdle) return;
@@ -368,7 +427,7 @@ function setMoving(moving) {
 let yaw = 0;
 let pitch = 0.42;
 const SENS = 0.0026;
-let camDist = 9.0;
+let camDist = 12.0;
 let firstPerson = false;
 const SHOULDER = 0.8;
 const EYE_H = 1.55;
@@ -431,7 +490,7 @@ addEventListener(
   'wheel',
   (e) => {
     if (!started) return;
-    camDist = Math.max(0, Math.min(14, camDist + Math.sign(e.deltaY) * 0.8));
+    camDist = Math.max(0, Math.min(18, camDist + Math.sign(e.deltaY) * 0.8));
     firstPerson = camDist < 1.2;
     e.preventDefault();
   },

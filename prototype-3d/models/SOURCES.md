@@ -9,5 +9,13 @@
 > should swap in a model with a clear license — e.g. a CC0 character, an asset
 > from a store with a game-use license, or a commissioned model.
 
+## Animations (`anim/`)
+
+`idle.glb`, `run.glb` are from the **Ready Player Me animation library**
+(github.com/readyplayerme/animation-library), played on RPM avatars created via
+the avatar page. They share RPM's rig so they retarget directly.
+
+---
+
 We only use assets we have the right to use. We do **not** extract or reuse
 assets from commercial games (copyright + EULA).

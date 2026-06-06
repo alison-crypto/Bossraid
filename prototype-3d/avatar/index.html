@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bossraid — Create your Avatar (Ready Player Me)</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: #0b0d14; color: #e8ecf6;
+        font-family: 'Trebuchet MS', system-ui, sans-serif; overflow: hidden; }
+      #bar { height: 56px; display: flex; align-items: center; gap: 14px; padding: 0 16px;
+        background: #11131d; border-bottom: 1px solid #2a2f42; }
+      #bar h1 { font-size: 16px; margin: 0; color: #ffd27a; }
+      #status { font-size: 13px; color: #8b93a7; flex: 1; }
+      button { border: none; border-radius: 8px; padding: 10px 16px; font: inherit;
+        font-weight: bold; cursor: pointer; }
+      #enter { background: #2a2f42; color: #6f788e; }
+      #enter.ready { background: #ffcc55; color: #1a1206; }
+      #frame { width: 100%; height: calc(100% - 56px); border: 0; display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="bar">
+      <h1>Create your Avatar</h1>
+      <div id="status">Customize your character, then press <b>Next / Done</b> in the creator…</div>
+      <button id="enter">Enter the Hall</button>
+    </div>
+    <iframe id="frame" allow="camera *; microphone *; clipboard-write"></iframe>
+
+    <script>
+      // Ready Player Me avatar creator embed. When the avatar is exported we save
+      // its GLB URL; the hall loads it as the hero.
+      const SAVE_KEY = 'bossraid.character.avatarUrl';
+      const SUBDOMAIN = 'demo'; // public RPM demo subdomain
+      const frame = document.getElementById('frame');
+      const statusEl = document.getElementById('status');
+      const enterBtn = document.getElementById('enter');
+
+      frame.src = `https://${SUBDOMAIN}.readyplayer.me/avatar?frameApi&bodyType=fullbody&clearCache`;
+
+      // If an avatar was already made, enable Enter right away.
+      try {
+        if (localStorage.getItem(SAVE_KEY)) {
+          enterBtn.classList.add('ready');
+          statusEl.innerHTML = 'Saved avatar found — make a new one or press <b>Enter the Hall</b>.';
+        }
+      } catch (_) {
+        /* storage may be blocked under file:// */
+      }
+
+      function parse(event) {
+        try {
+          return typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+        } catch {
+          return null;
+        }
+      }
+
+      window.addEventListener('message', (event) => {
+        const json = parse(event);
+        if (!json || json.source !== 'readyplayerme') return;
+        if (json.eventName === 'v1.frame.ready') {
+          frame.contentWindow.postMessage(
+            JSON.stringify({ target: 'readyplayerme', type: 'subscribe', eventName: 'v1.**' }),
+            '*'
+          );
+        }
+        if (json.eventName === 'v1.avatar.exported') {
+          const url = json.data.url;
+          try {
+            localStorage.setItem(SAVE_KEY, url);
+          } catch (_) {
+            /* ignore */
+          }
+          enterBtn.classList.add('ready');
+          statusEl.innerHTML = '✓ Avatar saved! Press <b>Enter the Hall</b> to play as your character.';
+        }
+      });
+
+      enterBtn.addEventListener('click', () => {
+        window.location.href = '../index.html';
+      });
+    </script>
+  </body>
+</html>
