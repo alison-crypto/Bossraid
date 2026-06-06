@@ -5,13 +5,13 @@
 // floor runner, glowing stained-glass wall panels, and a throne at the far end
 // with the boss (the Stone Golem) lit from above.
 //
-// Aiming is over-the-shoulder, action-MMO style: in third person the camera
-// rides a bit above/behind the head and a glowing ground ring shows where a
-// skill/attack would land (the center crosshair is used in first person). Low
-// blocks are climbable — solid on the sides, but you can jump on top of them.
+// Aiming is FPS-style: a center crosshair in both first and third person, and
+// attacks fire where the crosshair points (in 3D). Left = melee sword swing,
+// right = ranged bolt. Collision comes only from real solids (walls, columns,
+// dais, throne, boss) — all open floor is walkable, and low blocks/the dais are
+// climbable (solid on the sides, stand on top).
 //
-// Still a feel test (no combat). Three.js loads from a CDN so it runs from a
-// plain link.
+// Still a feel test. Three.js loads from a CDN so it runs from a plain link.
 
 import * as THREE from 'three';
 
@@ -20,9 +20,9 @@ const hint = document.getElementById('hint');
 const reticle = document.getElementById('reticle');
 
 // --- Room dimensions --------------------------------------------------------
-const HALF_W = 12; // playable half-width in X
-const Z_NEAR = 20; // entrance end (+Z)
-const Z_FAR = -14; // front edge of the dais (player stops here)
+const HALF_W = 12; // playable half-width in X (inside the walls)
+const Z_MIN = -22; // far wall (behind the throne)
+const Z_MAX = 22; // entrance wall
 const WALL_H = 15;
 const ROOM_W = 26; // visual wall span
 const ROOM_L = 46;
@@ -35,19 +35,19 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0b12);
-scene.fog = new THREE.Fog(0x0a0b12, 22, 64);
+scene.fog = new THREE.Fog(0x0a0b12, 26, 70);
 
 const camera = new THREE.PerspectiveCamera(62, 1, 0.05, 500);
 
 // --- Lighting ---------------------------------------------------------------
-scene.add(new THREE.HemisphereLight(0x4a5270, 0x101018, 0.5));
+scene.add(new THREE.HemisphereLight(0x4a5270, 0x101018, 0.55));
 
-const fill = new THREE.DirectionalLight(0x8090b0, 0.25);
+const fill = new THREE.DirectionalLight(0x8090b0, 0.3);
 fill.position.set(6, 20, 14);
 scene.add(fill);
 
 function ceilingLamp(z, color, intensity) {
-  const lamp = new THREE.SpotLight(color, intensity, 70, Math.PI / 4, 0.5, 1.2);
+  const lamp = new THREE.SpotLight(color, intensity, 75, Math.PI / 3.5, 0.5, 1.1);
   lamp.position.set(0, WALL_H - 1, z);
   lamp.target.position.set(0, 0, z);
   lamp.castShadow = true;
@@ -62,8 +62,8 @@ function ceilingLamp(z, color, intensity) {
   bulb.position.copy(lamp.position);
   scene.add(bulb);
 }
-ceilingLamp(2, 0xfff0d0, 7);
-ceilingLamp(Z_FAR - 3, 0xffe0c0, 6);
+ceilingLamp(8, 0xfff0d0, 7);
+ceilingLamp(-17, 0xffe0c0, 6); // over the throne
 
 // --- Materials --------------------------------------------------------------
 const stone = new THREE.MeshStandardMaterial({ color: 0x2b2d36, roughness: 0.95 });
@@ -157,7 +157,6 @@ function addCoverBlock(x, z) {
   m.castShadow = true;
   m.receiveShadow = true;
   scene.add(m);
-  // A lighter cap so the top reads as "standable".
   const cap = new THREE.Mesh(
     new THREE.BoxGeometry(2.9, 0.12, 2.9),
     new THREE.MeshStandardMaterial({ color: 0x3a3d49, roughness: 0.9 })
@@ -171,20 +170,25 @@ addCoverBlock(5.5, 2);
 addCoverBlock(-5.5, -3);
 addCoverBlock(5.5, -8);
 
-// --- Throne / dais ----------------------------------------------------------
+// --- Throne / dais (solid where the geometry is; dais is a climbable step) ---
 const dais = new THREE.Mesh(new THREE.BoxGeometry(16, 1.2, 7), stone);
 dais.position.set(0, 0.6, -18.5);
 dais.receiveShadow = true;
 dais.castShadow = true;
 scene.add(dais);
+addBoxSolid(0, -18.5, 16, 7, 1.2); // low step: walk up onto it
+
 const throneBack = new THREE.Mesh(new THREE.BoxGeometry(6, 7, 1.2), darkStone);
 throneBack.position.set(0, 4.5, -21);
 throneBack.castShadow = true;
 scene.add(throneBack);
+addBoxSolid(0, -21, 6, 1.2, 8); // tall: blocks
+
 const throneSeat = new THREE.Mesh(new THREE.BoxGeometry(6, 1.4, 3), darkStone);
 throneSeat.position.set(0, 2, -19.5);
 throneSeat.castShadow = true;
 scene.add(throneSeat);
+addBoxSolid(0, -19.5, 6, 3, 2.7);
 
 // --- Boss (Stone Golem) on the dais -----------------------------------------
 const boss = new THREE.Group();
@@ -206,9 +210,8 @@ scene.add(boss);
 cylinders.push({ x: 0, z: -17, r: 3.6, top: 8 });
 
 // --- Training dummy (center of the room) ------------------------------------
-// A static target to test aim + the placeholder attack against. It never dies:
-// its HP regenerates, so you can keep whacking it.
 const DUMMY_POS = new THREE.Vector3(0, 0, 2);
+const DUMMY_R = 0.85;
 const dummy = new THREE.Group();
 const dPost = new THREE.Mesh(
   new THREE.CylinderGeometry(0.18, 0.24, 2.2, 10),
@@ -226,7 +229,6 @@ const dHead = new THREE.Mesh(new THREE.SphereGeometry(0.34, 16, 16), dummyMat);
 dHead.position.y = 2.85;
 dHead.castShadow = true;
 dummy.add(dHead);
-// Target plate on the chest, facing the entrance.
 const plate = new THREE.Mesh(
   new THREE.CircleGeometry(0.5, 28),
   new THREE.MeshStandardMaterial({ map: makeTargetTexture(), transparent: true })
@@ -235,7 +237,7 @@ plate.position.set(0, 1.95, 0.58);
 dummy.add(plate);
 dummy.position.copy(DUMMY_POS);
 scene.add(dummy);
-cylinders.push({ x: DUMMY_POS.x, z: DUMMY_POS.z, r: 0.85, top: 3 });
+cylinders.push({ x: DUMMY_POS.x, z: DUMMY_POS.z, r: DUMMY_R, top: 3 });
 
 const dummyState = { max: 600, hp: 600, flash: 0, recoil: 0 };
 
@@ -252,11 +254,10 @@ const dBarFill = new THREE.Mesh(
 );
 dBarFill.position.z = 0.001;
 dummyBar.add(dBarBg, dBarFill);
-dummyBar.position.set(DUMMY_POS.x, 3.5, DUMMY_POS.z);
 dummyBar.renderOrder = 5;
 scene.add(dummyBar);
 
-// --- Hero -------------------------------------------------------------------
+// --- Hero (with a sword on a pivot for the melee swing) ---------------------
 const hero = new THREE.Group();
 const HERO_R = 0.45;
 const HERO_H = 1.05;
@@ -267,44 +268,29 @@ const heroBody = new THREE.Mesh(
 heroBody.position.y = HERO_R + HERO_H / 2;
 heroBody.castShadow = true;
 hero.add(heroBody);
-const blade = new THREE.Mesh(
-  new THREE.BoxGeometry(0.12, 0.12, 1.4),
-  new THREE.MeshStandardMaterial({ color: 0xdfe9ff, metalness: 0.4, roughness: 0.3 })
-);
-blade.position.set(0.45, 0.9, 0.4);
-hero.add(blade);
+
+const bladeMat = new THREE.MeshStandardMaterial({ color: 0xdfe9ff, metalness: 0.5, roughness: 0.3 });
+const swordPivot = new THREE.Group();
+const blade = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 1.5), bladeMat);
+blade.position.set(0, 0.95, 0.78);
+blade.castShadow = true;
+const guard = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.09, 0.09), bladeMat);
+guard.position.set(0, 0.95, 0.12);
+swordPivot.add(blade, guard);
+swordPivot.rotation.set(0, 0.5, 0); // rest pose: held to the side
+hero.add(swordPivot);
+
 hero.position.set(0, 0, 16);
 hero.rotation.y = Math.PI;
 scene.add(hero);
 
-// --- Ground aim ring (where a skill/attack would land) ----------------------
-const aimRing = new THREE.Group();
-const ring = new THREE.Mesh(
-  new THREE.RingGeometry(0.55, 0.78, 36),
-  new THREE.MeshBasicMaterial({
-    color: 0x66ddff,
-    transparent: true,
-    opacity: 0.9,
-    side: THREE.DoubleSide,
-  })
-);
-ring.rotation.x = -Math.PI / 2;
-const ringDot = new THREE.Mesh(
-  new THREE.CircleGeometry(0.16, 20),
-  new THREE.MeshBasicMaterial({ color: 0x66ddff, transparent: true, opacity: 0.6 })
-);
-ringDot.rotation.x = -Math.PI / 2;
-aimRing.add(ring, ringDot);
-aimRing.position.y = 0.05;
-scene.add(aimRing);
-
 // --- Camera control ---------------------------------------------------------
 let yaw = 0;
-let pitch = 0.42; // slightly higher default so you see the ground ahead
+let pitch = 0.42;
 const SENS = 0.0026;
 let camDist = 7.0;
 let firstPerson = false;
-const SHOULDER = 0.8; // over-the-shoulder lateral offset (3rd person)
+const SHOULDER = 0.8;
 const EYE_H = 1.55;
 
 let locked = false;
@@ -314,23 +300,38 @@ let started = false;
 function enter() {
   started = true;
   hint.classList.add('hidden');
+  reticle.style.display = 'block';
   const p = canvas.requestPointerLock?.();
   if (p && typeof p.catch === 'function') p.catch(() => {});
 }
+
+// Input: left = melee, right = ranged. Left also drag-looks when pointer lock
+// is unavailable; F / R are keyboard equivalents.
+let leftHeld = false;
+let rightHeld = false;
+addEventListener('contextmenu', (e) => e.preventDefault());
 document.addEventListener('mousedown', (e) => {
-  if (e.button !== 0) return;
   if (!started) {
-    enter();
-    dragging = true;
+    if (e.button === 0) {
+      enter();
+      dragging = true;
+    }
     return;
   }
-  dragging = true; // drag-look fallback when pointer lock is unavailable
-  mouseFiring = true; // and fire the test attack
+  if (e.button === 0) {
+    if (locked) leftHeld = true;
+    else dragging = true; // drag-look fallback
+  } else if (e.button === 2) {
+    rightHeld = true;
+  }
 });
 document.addEventListener('mouseup', (e) => {
-  if (e.button !== 0) return;
-  dragging = false;
-  mouseFiring = false;
+  if (e.button === 0) {
+    leftHeld = false;
+    dragging = false;
+  } else if (e.button === 2) {
+    rightHeld = false;
+  }
 });
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
@@ -365,31 +366,61 @@ addEventListener('keydown', (e) => {
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
 
-// --- Placeholder attack (to test aim against the dummy) ---------------------
-// Not the real combat system yet — just a fast bolt fired toward the aim point
-// so we can validate aiming + hit feedback. Hold to fire (mouse or F).
-let mouseFiring = false;
-let attackCd = 0;
-let lastAim = { x: DUMMY_POS.x, z: DUMMY_POS.z };
-const projectiles = []; // { mesh, vel, life }
-const particles = []; // { mesh, vel, life, max }
-const floatTexts = []; // { sp, life, max }
-const PROJ_SPEED = 40;
+// --- Attacks (placeholder, to test aim/melee against the dummy) -------------
+let meleeCd = 0;
+let meleeT = 0; // swing animation timer
+let rangedCd = 0;
+const lastForward = new THREE.Vector3(0, 0, -1);
+const projectiles = [];
+const particles = [];
+const floatTexts = [];
+const MELEE_DUR = 0.32;
+const MELEE_CD = 0.45;
+const MELEE_RANGE = 2.6;
+const RANGED_CD = 0.16;
+const PROJ_SPEED = 44;
 const boltGeo = new THREE.SphereGeometry(0.16, 10, 10);
 const boltMat = new THREE.MeshBasicMaterial({ color: 0x9fe8ff });
 
-function doAttack() {
-  if (attackCd > 0 || !started) return;
-  attackCd = 0.15;
+function hitDummy(dmg, at) {
+  dummyState.hp = Math.max(0, dummyState.hp - dmg);
+  dummyState.flash = 0.12;
+  dummyState.recoil = 0.18;
+  spark(at, 9, 0xffd27a, 170);
+  spawnNumber(new THREE.Vector3(DUMMY_POS.x, 2.5, DUMMY_POS.z), dmg);
+  if (dummyState.hp <= 0) dummyState.hp = dummyState.max; // never dies, refills
+}
+
+function doMelee() {
+  if (meleeCd > 0 || !started) return;
+  meleeCd = MELEE_CD;
+  meleeT = MELEE_DUR;
+  // Face where we're aiming so the swing reads correctly.
+  hero.rotation.y = Math.atan2(lastForward.x, lastForward.z);
+  const dx = DUMMY_POS.x - hero.position.x;
+  const dz = DUMMY_POS.z - hero.position.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist < MELEE_RANGE + DUMMY_R) {
+    const dot = (dx / dist) * lastForward.x + (dz / dist) * lastForward.z;
+    if (dot > 0.2) {
+      // within ~78° of aim
+      hitDummy(48 + Math.floor(Math.random() * 18), new THREE.Vector3(DUMMY_POS.x, 1.9, DUMMY_POS.z));
+    }
+  }
+}
+
+function doRanged() {
+  if (rangedCd > 0 || !started) return;
+  rangedCd = RANGED_CD;
+  _ray.setFromCamera(_center, camera);
+  const target = _ray.ray.origin.clone().addScaledVector(_ray.ray.direction, 30);
   const from = new THREE.Vector3(hero.position.x, hero.position.y + 1.0, hero.position.z);
-  const dir = new THREE.Vector3(lastAim.x - from.x, 0, lastAim.z - from.z);
-  if (dir.lengthSq() < 1e-4) return;
-  dir.normalize();
+  const vel = target.sub(from).normalize().multiplyScalar(PROJ_SPEED);
   const mesh = new THREE.Mesh(boltGeo, boltMat);
   mesh.position.copy(from);
   scene.add(mesh);
-  projectiles.push({ mesh, vel: dir.multiplyScalar(PROJ_SPEED), life: 1.4 });
-  spark(from, 4, 0x9fe8ff, 90);
+  projectiles.push({ mesh, vel, life: 1.4 });
+  spark(from, 3, 0x9fe8ff, 80);
 }
 
 function spark(pos, count, color, speed = 140) {
@@ -398,13 +429,13 @@ function spark(pos, count, color, speed = 140) {
     const m = new THREE.Mesh(boltGeo, mat);
     m.scale.setScalar(0.5);
     m.position.copy(pos);
+    m.position.y += 0.2;
     const a = Math.random() * Math.PI * 2;
     const up = Math.random() * 0.6 + 0.2;
-    m.position.y += 0.2;
     scene.add(m);
     particles.push({
       mesh: m,
-      vel: new THREE.Vector3(Math.cos(a) * speed * 0.01 * 6, up * 4, Math.sin(a) * speed * 0.01 * 6),
+      vel: new THREE.Vector3(Math.cos(a) * speed * 0.06, up * 4, Math.sin(a) * speed * 0.06),
       life: 0.4,
       max: 0.4,
     });
@@ -434,29 +465,37 @@ function spawnNumber(pos, val) {
 }
 
 function updateCombat(dt) {
-  attackCd = Math.max(0, attackCd - dt);
-  if ((mouseFiring || keys.has('KeyF')) && attackCd <= 0) doAttack();
+  meleeCd = Math.max(0, meleeCd - dt);
+  rangedCd = Math.max(0, rangedCd - dt);
+  if ((leftHeld || keys.has('KeyF')) && meleeCd <= 0) doMelee();
+  if ((rightHeld || keys.has('KeyR')) && rangedCd <= 0) doRanged();
 
-  // Projectiles.
+  // Sword swing animation.
+  if (meleeT > 0) {
+    meleeT = Math.max(0, meleeT - dt);
+    const p = 1 - meleeT / MELEE_DUR; // 0 -> 1
+    swordPivot.rotation.y = 1.1 - p * 2.4; // sweep right to left
+    swordPivot.rotation.x = -Math.sin(p * Math.PI) * 0.7; // chop down + back up
+  } else {
+    swordPivot.rotation.set(0, 0.5, 0);
+  }
+
+  // Projectiles (3D).
+  const dpos = new THREE.Vector3(DUMMY_POS.x, 1.9, DUMMY_POS.z);
   for (let i = projectiles.length - 1; i >= 0; i--) {
     const p = projectiles[i];
     p.mesh.position.addScaledVector(p.vel, dt);
     p.life -= dt;
-    const px = p.mesh.position.x;
-    const pz = p.mesh.position.z;
-    const hitDummy = Math.hypot(px - DUMMY_POS.x, pz - DUMMY_POS.z) < 0.85 + 0.16;
-    const outOfRoom = Math.abs(px) > HALF_W || pz > Z_NEAR || pz < ROOM_L / -2 + 1;
-    if (hitDummy) {
-      const dmg = 28 + Math.floor(Math.random() * 12);
-      dummyState.hp = Math.max(0, dummyState.hp - dmg);
-      dummyState.flash = 0.12;
-      dummyState.recoil = 0.18;
-      const hp = p.mesh.position.clone();
-      spark(hp, 8, 0xffd27a, 160);
-      spawnNumber(new THREE.Vector3(DUMMY_POS.x, 2.4, DUMMY_POS.z), dmg);
-      if (dummyState.hp <= 0) dummyState.hp = dummyState.max; // refill, never dies
-    }
-    if (hitDummy || p.life <= 0 || outOfRoom) {
+    const pos = p.mesh.position;
+    const hit = pos.distanceTo(dpos) < DUMMY_R + 0.2;
+    const out =
+      Math.abs(pos.x) > HALF_W ||
+      pos.z > Z_MAX ||
+      pos.z < Z_MIN ||
+      pos.y < 0.05 ||
+      pos.y > WALL_H;
+    if (hit) hitDummy(26 + Math.floor(Math.random() * 12), pos.clone());
+    if (hit || p.life <= 0 || out) {
       scene.remove(p.mesh);
       projectiles.splice(i, 1);
     }
@@ -491,9 +530,8 @@ function updateCombat(dt) {
     ft.sp.material.opacity = ft.life / ft.max;
   }
 
-  // Dummy: slow HP regen, hit flash, and recoil lean.
+  // Dummy: slow HP regen, hit flash, recoil lean, billboard HP bar.
   dummyState.hp = Math.min(dummyState.max, dummyState.hp + 22 * dt);
-  dummyMat.emissive = dummyMat.emissive || new THREE.Color();
   if (dummyState.flash > 0) {
     dummyState.flash -= dt;
     dummyMat.emissive.setHex(0x886644);
@@ -501,9 +539,8 @@ function updateCombat(dt) {
     dummyMat.emissive.setHex(0x000000);
   }
   if (dummyState.recoil > 0) dummyState.recoil -= dt;
-  dummy.rotation.x = Math.max(0, dummyState.recoil) * 1.2; // tip back when hit
+  dummy.rotation.x = Math.max(0, dummyState.recoil) * 1.2;
 
-  // Billboard the HP bar toward the camera and scale the fill.
   const frac = dummyState.hp / dummyState.max;
   dBarFill.scale.x = Math.max(0.0001, frac);
   dBarFill.position.x = -(DBAR_W * (1 - frac)) / 2;
@@ -528,7 +565,6 @@ function resolveCollisions() {
   let hz = hero.position.z;
   const feet = hero.position.y;
 
-  // Side-blocking (only while feet are below the solid's top).
   for (const c of cylinders) {
     if (feet >= c.top - STEP) continue;
     const dx = hx - c.x;
@@ -554,7 +590,6 @@ function resolveCollisions() {
         hx += dx * k;
         hz += dz * k;
       } else {
-        // Center inside the box: eject along the nearest face.
         const l = hx - b.minX;
         const rt = b.maxX - hx;
         const n = hz - b.minZ;
@@ -568,13 +603,13 @@ function resolveCollisions() {
     }
   }
 
-  // Keep inside the hall.
+  // Walls only — all open floor is walkable.
   hx = clamp(hx, -HALF_W, HALF_W);
-  hz = clamp(hz, Z_FAR, Z_NEAR);
+  hz = clamp(hz, Z_MIN, Z_MAX);
   hero.position.x = hx;
   hero.position.z = hz;
 
-  // Support height: the highest solid we're standing over (else floor at 0).
+  // Support height: highest solid we're standing over (else floor at 0).
   let groundY = 0;
   for (const c of cylinders) {
     if (Math.hypot(hx - c.x, hz - c.z) <= c.r && feet >= c.top - STEP) {
@@ -589,32 +624,12 @@ function resolveCollisions() {
   return groundY;
 }
 
-function aimPoint(forward) {
-  // Where the camera-center ray meets the floor — that's where attacks land.
-  _ray.setFromCamera(_center, camera);
-  const o = _ray.ray.origin;
-  const d = _ray.ray.direction;
-  if (d.y < -1e-4) {
-    const t = -o.y / d.y;
-    if (t > 0 && t < 200) {
-      return {
-        x: clamp(o.x + d.x * t, -HALF_W, HALF_W),
-        z: clamp(o.z + d.z * t, Z_FAR, Z_NEAR),
-      };
-    }
-  }
-  // Looking too flat to hit the floor: project forward from the hero.
-  return {
-    x: clamp(hero.position.x + forward.x * 12, -HALF_W, HALF_W),
-    z: clamp(hero.position.z + forward.z * 12, Z_FAR, Z_NEAR),
-  };
-}
-
 function update(dt) {
   const cosP = Math.cos(pitch);
   const dir = new THREE.Vector3(cosP * Math.sin(yaw), Math.sin(pitch), cosP * Math.cos(yaw));
   const forward = new THREE.Vector3(-dir.x, 0, -dir.z).normalize();
   const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+  lastForward.copy(forward);
 
   const move = new THREE.Vector3();
   if (keys.has('KeyW') || keys.has('ArrowUp')) move.add(forward);
@@ -627,13 +642,14 @@ function update(dt) {
     move.normalize();
     hero.position.x += move.x * speed * dt;
     hero.position.z += move.z * speed * dt;
-    const targetYaw = Math.atan2(move.x, move.z);
-    hero.rotation.y = lerpAngle(hero.rotation.y, targetYaw, 0.2);
+    if (meleeT <= 0) {
+      const targetYaw = Math.atan2(move.x, move.z);
+      hero.rotation.y = lerpAngle(hero.rotation.y, targetYaw, 0.2);
+    }
   }
 
   const groundY = resolveCollisions();
 
-  // Jump + gravity, landing on whatever we're standing over.
   const onGround = hero.position.y <= groundY + 0.02;
   if (keys.has('Space') && onGround) vy = JUMP_V;
   vy += GRAVITY * dt;
@@ -645,7 +661,7 @@ function update(dt) {
 
   // Camera: over-the-shoulder in third person, eyes in first person.
   heroBody.visible = !firstPerson;
-  blade.visible = !firstPerson;
+  swordPivot.visible = !firstPerson;
   const eye = new THREE.Vector3(hero.position.x, hero.position.y + EYE_H, hero.position.z);
   if (firstPerson) {
     camera.position.copy(eye);
@@ -655,19 +671,7 @@ function update(dt) {
     camera.position.copy(anchor).addScaledVector(dir, camDist);
     camera.lookAt(anchor);
   }
-
-  // Aim point (where the camera center meets the floor) drives both the ring
-  // and where the test attack fires. Needs the camera matrix refreshed first.
   camera.updateMatrixWorld();
-  lastAim = aimPoint(forward);
-  if (firstPerson) {
-    reticle.style.display = 'block';
-    aimRing.visible = false;
-  } else {
-    reticle.style.display = 'none';
-    aimRing.visible = true;
-    aimRing.position.set(lastAim.x, 0.05, lastAim.z);
-  }
 
   updateCombat(dt);
 
