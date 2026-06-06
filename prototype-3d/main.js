@@ -435,7 +435,8 @@ function setMoving(moving) {
 // Persisted to localStorage so your adjustments survive a reload.
 const TUNE_KEY = 'bossraid.tune.v1';
 const tune = Object.assign(
-  { scale: 0.6, camDist: 3.2, eyeH: 2.65, shoulder: 1.05, fov: 77, yaw: 180 },
+  { scale: 0.6, camDist: 3.2, eyeH: 2.65, shoulder: 1.05, fov: 77, yaw: 180,
+    wpx: 0.22, wpy: 0.5, wpz: 0.18, wrx: 0, wry: 0.5, wscale: 1 },
   (() => {
     try {
       return JSON.parse(localStorage.getItem(TUNE_KEY) || '{}');
@@ -670,7 +671,7 @@ function updateCombat(dt) {
     swordPivot.rotation.y = 1.1 - p * 2.4; // sweep right to left
     swordPivot.rotation.x = -Math.sin(p * Math.PI) * 0.7; // chop down + back up
   } else {
-    swordPivot.rotation.set(0, 0.5, 0);
+    swordPivot.rotation.set(tune.wrx, tune.wry, 0); // rest pose (dev-tunable)
   }
 
   // Projectiles (3D).
@@ -976,6 +977,12 @@ const tunerInputs = {
   shoulder: document.getElementById('t-shoulder'),
   fov: document.getElementById('t-fov'),
   yaw: document.getElementById('t-yaw'),
+  wpx: document.getElementById('t-wpx'),
+  wpy: document.getElementById('t-wpy'),
+  wpz: document.getElementById('t-wpz'),
+  wrx: document.getElementById('t-wrx'),
+  wry: document.getElementById('t-wry'),
+  wscale: document.getElementById('t-wscale'),
 };
 const tunerReadout = document.getElementById('t-readout');
 
@@ -984,15 +991,18 @@ function applyTune() {
   camera.fov = tune.fov;
   camera.updateProjectionMatrix();
   rescaleHero();
-  // Sword scales with the character so it stays in the hand/at the right height.
-  swordPivot.scale.setScalar(tune.scale);
+  // Sword: scale with the character, positioned via the weapon dev-sliders.
+  swordPivot.scale.setScalar(tune.scale * tune.wscale);
+  swordPivot.position.set(tune.wpx, tune.wpy, tune.wpz);
 }
 function updateReadout() {
   if (!tunerReadout) return;
   tunerReadout.textContent =
     `scale ${(+tune.scale).toFixed(2)} · cam ${(+tune.camDist).toFixed(1)} · ` +
     `eye ${(+tune.eyeH).toFixed(2)} · shoulder ${(+tune.shoulder).toFixed(2)} · ` +
-    `fov ${Math.round(tune.fov)} · yaw ${Math.round(tune.yaw)}`;
+    `fov ${Math.round(tune.fov)} · yaw ${Math.round(tune.yaw)}\n` +
+    `weapon pos ${(+tune.wpx).toFixed(2)},${(+tune.wpy).toFixed(2)},${(+tune.wpz).toFixed(2)} · ` +
+    `rot ${(+tune.wrx).toFixed(2)},${(+tune.wry).toFixed(2)} · wscale ${(+tune.wscale).toFixed(2)}`;
 }
 function syncTunerInputs() {
   for (const k in tunerInputs) {
