@@ -435,7 +435,7 @@ function setMoving(moving) {
 // Persisted to localStorage so your adjustments survive a reload.
 const TUNE_KEY = 'bossraid.tune.v1';
 const tune = Object.assign(
-  { scale: 1.3, camDist: 12, eyeH: 1.55, shoulder: 0.8, fov: 74, yaw: 180 },
+  { scale: 0.6, camDist: 3.2, eyeH: 2.65, shoulder: 1.05, fov: 77, yaw: 180 },
   (() => {
     try {
       return JSON.parse(localStorage.getItem(TUNE_KEY) || '{}');
@@ -599,7 +599,12 @@ function doRanged() {
   if (rangedCd > 0 || !started) return;
   rangedCd = RANGED_CD;
   const target = computeAimTarget();
-  const from = new THREE.Vector3(hero.position.x, hero.position.y + 1.0, hero.position.z);
+  // Launch from roughly chest height, scaled to the character.
+  const from = new THREE.Vector3(
+    hero.position.x,
+    hero.position.y + tune.scale * 0.65,
+    hero.position.z
+  );
   const vel = target.sub(from).normalize().multiplyScalar(PROJ_SPEED);
   const mesh = new THREE.Mesh(boltGeo, boltMat);
   mesh.position.copy(from);
@@ -979,6 +984,8 @@ function applyTune() {
   camera.fov = tune.fov;
   camera.updateProjectionMatrix();
   rescaleHero();
+  // Sword scales with the character so it stays in the hand/at the right height.
+  swordPivot.scale.setScalar(tune.scale);
 }
 function updateReadout() {
   if (!tunerReadout) return;
