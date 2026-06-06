@@ -130,13 +130,35 @@ const SENS = 0.0026;
 const camDist = 7.2;
 
 let locked = false;
-canvas.addEventListener('click', () => canvas.requestPointerLock());
+let dragging = false;
+let started = false;
+
+// Enter on a press ANYWHERE. (The hint overlay sits above the canvas, so a
+// canvas-only click listener never fired — that was the "stuck on Click to
+// enter" bug.) We try to capture the mouse for free-look, but fall back to
+// click-drag below if the browser blocks pointer lock.
+function enter() {
+  started = true;
+  hint.classList.add('hidden');
+  const p = canvas.requestPointerLock?.();
+  if (p && typeof p.catch === 'function') p.catch(() => {});
+}
+
+document.addEventListener('mousedown', () => {
+  enter();
+  dragging = true;
+});
+document.addEventListener('mouseup', () => {
+  dragging = false;
+});
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
-  hint.classList.toggle('hidden', locked);
 });
+
+// Mouse-capture gives free-look; click-drag is the fallback so the camera
+// always turns even when pointer lock is unavailable or released with Esc.
 document.addEventListener('mousemove', (e) => {
-  if (!locked) return;
+  if (!started || (!locked && !dragging)) return;
   yaw -= e.movementX * SENS;
   pitch -= e.movementY * SENS;
   pitch = Math.max(-0.2, Math.min(1.1, pitch)); // clamp so we don't flip over
