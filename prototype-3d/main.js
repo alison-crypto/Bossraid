@@ -322,6 +322,8 @@ hero.traverse((o) => (o.userData.noAim = true)); // don't aim at ourselves
 const MODEL_YAW_OFFSET = Math.PI; // flip if the model faces backward
 let heroModel = null;
 let heroNaturalHeight = 1;
+let handBone = null; // right-hand bone the weapon is parented to (if found)
+const _ws = new THREE.Vector3();
 let mixer = null;
 let actIdle = null;
 let actMove = null;
@@ -352,6 +354,18 @@ function setupHeroModel(sceneRoot) {
   rescaleHero();
   heroBody.visible = false; // hide the capsule
   mixer = new THREE.AnimationMixer(heroModel);
+
+  // Standard weapon attach: parent the sword to the right-hand bone so it's
+  // held and rides the arm through every animation (works for any humanoid rig
+  // with a standard hand-bone name). Falls back to body-attached if not found.
+  handBone =
+    heroModel.getObjectByName('mixamorigRightHand') ||
+    heroModel.getObjectByName('RightHand') ||
+    heroModel.getObjectByName('mixamorig:RightHand') ||
+    heroModel.getObjectByName('Hand_R') ||
+    heroModel.getObjectByName('hand_r') ||
+    null;
+  if (handBone) handBone.add(swordPivot); // reparent from hero into the hand
 }
 
 function playClips(idleClip, moveClip) {
@@ -824,6 +838,13 @@ function update(dt) {
     setMoving(move.lengthSq() > 0 && hero.position.y <= groundY + 0.05);
     mixer.update(dt);
   }
+  // Keep the held sword a consistent world size regardless of the hand bone's
+  // (animated) scale.
+  if (handBone) {
+    handBone.getWorldScale(_ws);
+    const inv = _ws.x ? 1 / _ws.x : 1;
+    swordPivot.scale.setScalar(tune.wscale * 0.5 * inv);
+  }
 
   // Camera: over-the-shoulder in third person, eyes in first person.
   // Hide the body in first person; keep the sword visible (FPS weapon view).
@@ -957,9 +978,11 @@ function applyTune() {
   camera.fov = tune.fov;
   camera.updateProjectionMatrix();
   rescaleHero();
-  // Sword: scale with the character, positioned via the weapon dev-sliders.
-  swordPivot.scale.setScalar(tune.scale * tune.wscale);
+  // Sword: positioned via the weapon dev-sliders. When held in the hand bone
+  // its scale is set per-frame (to counter the bone's scale); otherwise scale
+  // it with the character here.
   swordPivot.position.set(tune.wpx, tune.wpy, tune.wpz);
+  if (!handBone) swordPivot.scale.setScalar(tune.scale * tune.wscale);
 }
 function updateReadout() {
   if (!tunerReadout) return;
