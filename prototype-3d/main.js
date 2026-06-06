@@ -1,14 +1,29 @@
-// Bossraid — 3D feel test.
+// Bossraid — Floor 1 Boss Hall (3D engine test).
 //
-// A throwaway third-person prototype to answer one question: does controlling a
-// hero in a 3D browser scene feel good? No gameplay — just movement, a follow
-// camera, and an Aincrad-style floating platform with a boss statue for scale.
-// Uses Three.js loaded from a CDN, so it still runs from a plain link.
+// A third/first-person prototype styled after the Aincrad Floor 1 boss room:
+// an enclosed stone hall with two rows of columns, a green-and-purple knotwork
+// floor runner, glowing stained-glass wall panels, and a throne at the far end
+// with the boss (the Stone Golem) lit from above.
+//
+// Still a feel test — no combat — but now with the pieces requested from the
+// last round: an aim crosshair + ground aim arrow, a first/third-person toggle
+// (V / mouse wheel), and solid collision against the columns, walls and boss.
+//
+// Three.js loads from a CDN so this still runs from a plain link.
 
 import * as THREE from 'three';
 
 const canvas = document.getElementById('c');
 const hint = document.getElementById('hint');
+const reticle = document.getElementById('reticle');
+
+// --- Room dimensions --------------------------------------------------------
+const HALF_W = 12; // playable half-width in X
+const Z_NEAR = 20; // entrance end (+Z)
+const Z_FAR = -14; // front edge of the dais (player stops here)
+const WALL_H = 15;
+const ROOM_W = 26; // visual wall span
+const ROOM_L = 46;
 
 // --- Renderer / scene -------------------------------------------------------
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -17,129 +32,199 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x9fc4e8); // hazy sky
-scene.fog = new THREE.Fog(0x9fc4e8, 60, 170);
+scene.background = new THREE.Color(0x0a0b12);
+scene.fog = new THREE.Fog(0x0a0b12, 22, 64);
 
-const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+const camera = new THREE.PerspectiveCamera(62, 1, 0.05, 500);
 
 // --- Lighting ---------------------------------------------------------------
-const hemi = new THREE.HemisphereLight(0xcfe6ff, 0x46506a, 0.9);
-scene.add(hemi);
+// Low ambient so the hall stays moody; the drama comes from the hanging lights.
+scene.add(new THREE.HemisphereLight(0x4a5270, 0x101018, 0.5));
 
-const sun = new THREE.DirectionalLight(0xfff2d8, 1.5);
-sun.position.set(28, 42, 18);
-sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.near = 1;
-sun.shadow.camera.far = 140;
-sun.shadow.camera.left = -50;
-sun.shadow.camera.right = 50;
-sun.shadow.camera.top = 50;
-sun.shadow.camera.bottom = -50;
-scene.add(sun);
+const fill = new THREE.DirectionalLight(0x8090b0, 0.25);
+fill.position.set(6, 20, 14);
+scene.add(fill);
 
-// --- The floating platform (one "floor" of the castle) ----------------------
-const PLATFORM_R = 26;
+// Hanging fixture over the center of the hall (the bright light in the photo).
+function ceilingLamp(z, color, intensity) {
+  const lamp = new THREE.SpotLight(color, intensity, 70, Math.PI / 4, 0.5, 1.2);
+  lamp.position.set(0, WALL_H - 1, z);
+  lamp.target.position.set(0, 0, z);
+  lamp.castShadow = true;
+  lamp.shadow.mapSize.set(1024, 1024);
+  lamp.shadow.camera.near = 1;
+  lamp.shadow.camera.far = 40;
+  scene.add(lamp, lamp.target);
+  // Visible glowing bulb.
+  const bulb = new THREE.Mesh(
+    new THREE.SphereGeometry(0.7, 16, 16),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 2 })
+  );
+  bulb.position.copy(lamp.position);
+  scene.add(bulb);
+}
+ceilingLamp(2, 0xfff0d0, 7); // main hall light
+ceilingLamp(Z_FAR - 3, 0xffe0c0, 6); // throne light
 
-const platform = new THREE.Mesh(
-  new THREE.CylinderGeometry(PLATFORM_R, PLATFORM_R - 2.5, 3, 64),
-  new THREE.MeshStandardMaterial({ color: 0x6b7387, roughness: 0.95 })
-);
-platform.position.y = -1.5;
-platform.receiveShadow = true;
-scene.add(platform);
+// --- Materials --------------------------------------------------------------
+const stone = new THREE.MeshStandardMaterial({ color: 0x2b2d36, roughness: 0.95 });
+const darkStone = new THREE.MeshStandardMaterial({ color: 0x1c1e26, roughness: 1 });
 
-// Inlaid floor disc with a subtle grid so motion reads clearly.
-const floorTex = makeGridTexture();
+// --- Floor (green base + purple knotwork runner) ----------------------------
 const floor = new THREE.Mesh(
-  new THREE.CircleGeometry(PLATFORM_R - 0.4, 64),
-  new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.8, color: 0x8a93ab })
+  new THREE.PlaneGeometry(ROOM_W, ROOM_L),
+  new THREE.MeshStandardMaterial({ map: makeKnotTexture(), roughness: 0.85 })
 );
 floor.rotation.x = -Math.PI / 2;
-floor.position.y = 0.01;
 floor.receiveShadow = true;
 scene.add(floor);
 
-// Ring of pillars around the rim — strong parallax + a sense of scale.
-const pillarGeo = new THREE.CylinderGeometry(0.9, 1.1, 9, 12);
-const pillarMat = new THREE.MeshStandardMaterial({ color: 0x556, roughness: 0.9 });
-for (let i = 0; i < 14; i++) {
-  const a = (i / 14) * Math.PI * 2;
-  const p = new THREE.Mesh(pillarGeo, pillarMat);
-  p.position.set(Math.cos(a) * (PLATFORM_R - 2), 4.5, Math.sin(a) * (PLATFORM_R - 2));
-  p.castShadow = true;
-  p.receiveShadow = true;
-  scene.add(p);
+// --- Walls + ceiling --------------------------------------------------------
+function wall(w, h, d, x, y, z, mat = stone) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z);
+  m.receiveShadow = true;
+  m.castShadow = true;
+  scene.add(m);
+  return m;
+}
+wall(1, WALL_H, ROOM_L, -ROOM_W / 2, WALL_H / 2, 0); // left
+wall(1, WALL_H, ROOM_L, ROOM_W / 2, WALL_H / 2, 0); // right
+wall(ROOM_W, WALL_H, 1, 0, WALL_H / 2, -ROOM_L / 2); // far (behind throne)
+wall(ROOM_W, WALL_H, 1, 0, WALL_H / 2, ROOM_L / 2); // near (entrance)
+wall(ROOM_W, 1, ROOM_L, 0, WALL_H, 0, darkStone); // ceiling
+
+// --- Stained-glass wall panels (the colorful glow in the photo) -------------
+const panelColors = [0xff4d8d, 0x4dd0ff, 0x8aff5a, 0xffc14d, 0xb060ff, 0xff6a4d];
+function addPanels(xFace, faceInwardY) {
+  for (let i = 0; i < 7; i++) {
+    const z = -16 + i * 5.3;
+    const c = panelColors[(i + (xFace < 0 ? 0 : 3)) % panelColors.length];
+    const panel = new THREE.Mesh(
+      new THREE.PlaneGeometry(3.2, 6),
+      new THREE.MeshStandardMaterial({
+        color: c,
+        emissive: c,
+        emissiveIntensity: 0.7,
+        roughness: 0.4,
+        side: THREE.DoubleSide,
+      })
+    );
+    panel.position.set(xFace, 7.5, z);
+    panel.rotation.y = faceInwardY;
+    scene.add(panel);
+  }
+}
+addPanels(-ROOM_W / 2 + 0.55, Math.PI / 2);
+addPanels(ROOM_W / 2 - 0.55, -Math.PI / 2);
+
+// --- Columns (two flanking rows) + collision data ---------------------------
+const COL_R = 1.0;
+const obstacles = []; // { x, z, r } solid cylinders for collision
+
+function addColumn(x, z) {
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(COL_R, COL_R, 12, 16), stone);
+  shaft.position.set(x, 6, z);
+  shaft.castShadow = true;
+  shaft.receiveShadow = true;
+  scene.add(shaft);
+  // Base + capital blocks.
+  for (const y of [0.4, 11.6]) {
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.8, 2.6), darkStone);
+    cap.position.set(x, y, z);
+    cap.castShadow = true;
+    scene.add(cap);
+  }
+  obstacles.push({ x, z, r: COL_R + 0.4 });
+}
+for (let i = 0; i < 7; i++) {
+  const z = -12 + i * 5.0;
+  addColumn(-8.5, z);
+  addColumn(8.5, z);
 }
 
-// A drifting backdrop of smaller floating rocks, for the sky-castle vibe.
-const rockMat = new THREE.MeshStandardMaterial({ color: 0x5a6075, roughness: 1 });
-const rocks = [];
-for (let i = 0; i < 18; i++) {
-  const r = new THREE.Mesh(new THREE.DodecahedronGeometry(2 + Math.random() * 4), rockMat);
-  const a = Math.random() * Math.PI * 2;
-  const dist = 60 + Math.random() * 70;
-  r.position.set(Math.cos(a) * dist, -10 + Math.random() * 40, Math.sin(a) * dist);
-  scene.add(r);
-  rocks.push({ mesh: r, spin: (Math.random() - 0.5) * 0.3 });
-}
+// --- Throne / dais at the far end -------------------------------------------
+const dais = new THREE.Mesh(new THREE.BoxGeometry(16, 1.2, 7), stone);
+dais.position.set(0, 0.6, -18.5);
+dais.receiveShadow = true;
+dais.castShadow = true;
+scene.add(dais);
 
-// --- Boss statue (echoes the Golem) for scale -------------------------------
+const throneBack = new THREE.Mesh(new THREE.BoxGeometry(6, 7, 1.2), darkStone);
+throneBack.position.set(0, 4.5, -21);
+throneBack.castShadow = true;
+scene.add(throneBack);
+const throneSeat = new THREE.Mesh(new THREE.BoxGeometry(6, 1.4, 3), darkStone);
+throneSeat.position.set(0, 2, -19.5);
+throneSeat.castShadow = true;
+scene.add(throneSeat);
+
+// --- Boss (the Stone Golem) on the dais -------------------------------------
 const boss = new THREE.Group();
 const bossBody = new THREE.Mesh(
-  new THREE.CylinderGeometry(3.4, 4.2, 8, 6),
+  new THREE.CylinderGeometry(2.6, 3.4, 6.5, 6),
   new THREE.MeshStandardMaterial({ color: 0x8a6a55, roughness: 0.85, flatShading: true })
 );
-bossBody.position.y = 4;
+bossBody.position.y = 3.25;
 bossBody.castShadow = true;
 boss.add(bossBody);
 const bossCore = new THREE.Mesh(
-  new THREE.IcosahedronGeometry(1.4, 0),
+  new THREE.IcosahedronGeometry(1.1, 0),
   new THREE.MeshStandardMaterial({ color: 0xff8a3a, emissive: 0xff5a1a, emissiveIntensity: 1.4 })
 );
-bossCore.position.y = 4.5;
+bossCore.position.y = 3.6;
 boss.add(bossCore);
-boss.position.set(0, 0, -8);
+boss.position.set(0, 1.2, -17);
 scene.add(boss);
+obstacles.push({ x: 0, z: -17, r: 3.6 }); // can't walk through the golem
 
 // --- Hero -------------------------------------------------------------------
 const hero = new THREE.Group();
 const HERO_R = 0.45;
 const HERO_H = 1.05;
-const body = new THREE.Mesh(
+const heroBody = new THREE.Mesh(
   new THREE.CapsuleGeometry(HERO_R, HERO_H, 6, 14),
   new THREE.MeshStandardMaterial({ color: 0x3aa0ff, roughness: 0.5, metalness: 0.1 })
 );
-body.position.y = HERO_R + HERO_H / 2;
-body.castShadow = true;
-hero.add(body);
-// A little "blade" so facing direction is obvious.
+heroBody.position.y = HERO_R + HERO_H / 2;
+heroBody.castShadow = true;
+hero.add(heroBody);
 const blade = new THREE.Mesh(
   new THREE.BoxGeometry(0.12, 0.12, 1.4),
   new THREE.MeshStandardMaterial({ color: 0xdfe9ff, metalness: 0.4, roughness: 0.3 })
 );
 blade.position.set(0.45, 0.9, 0.4);
 hero.add(blade);
-hero.position.set(0, 0, 9);
+hero.position.set(0, 0, 16);
+hero.rotation.y = Math.PI; // face the throne (-Z)
 scene.add(hero);
 
-// --- Camera control (third-person follow) -----------------------------------
-let yaw = Math.PI; // look toward the boss at the center
+// --- Aim arrow (ground indicator for attack direction) ----------------------
+const aimArrow = new THREE.ArrowHelper(
+  new THREE.Vector3(0, 0, -1),
+  new THREE.Vector3(0, 0.12, 0),
+  3.6,
+  0x66ddff,
+  0.8,
+  0.5
+);
+scene.add(aimArrow);
+
+// --- Camera control: first/third person -------------------------------------
+let yaw = 0; // 0 → camera behind hero, looking toward the throne (-Z)
 let pitch = 0.32;
 const SENS = 0.0026;
-const camDist = 7.2;
+let camDist = 7.0;
+let firstPerson = false;
 
 let locked = false;
 let dragging = false;
 let started = false;
 
-// Enter on a press ANYWHERE. (The hint overlay sits above the canvas, so a
-// canvas-only click listener never fired — that was the "stuck on Click to
-// enter" bug.) We try to capture the mouse for free-look, but fall back to
-// click-drag below if the browser blocks pointer lock.
 function enter() {
   started = true;
   hint.classList.add('hidden');
+  reticle.style.display = 'block';
   const p = canvas.requestPointerLock?.();
   if (p && typeof p.catch === 'function') p.catch(() => {});
 }
@@ -154,40 +239,50 @@ document.addEventListener('mouseup', () => {
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
 });
-
-// Mouse-capture gives free-look; click-drag is the fallback so the camera
-// always turns even when pointer lock is unavailable or released with Esc.
 document.addEventListener('mousemove', (e) => {
   if (!started || (!locked && !dragging)) return;
   yaw -= e.movementX * SENS;
   pitch -= e.movementY * SENS;
-  pitch = Math.max(-0.2, Math.min(1.1, pitch)); // clamp so we don't flip over
+  pitch = Math.max(-0.25, Math.min(1.1, pitch));
 });
+// Wheel zooms; zooming all the way in flips to first person.
+addEventListener(
+  'wheel',
+  (e) => {
+    if (!started) return;
+    camDist = Math.max(0, Math.min(11, camDist + Math.sign(e.deltaY) * 0.8));
+    firstPerson = camDist < 1.2;
+    e.preventDefault();
+  },
+  { passive: false }
+);
 
-// --- Input ------------------------------------------------------------------
+// --- Keyboard ---------------------------------------------------------------
 const keys = new Set();
 addEventListener('keydown', (e) => {
+  if (e.code === 'KeyV') {
+    firstPerson = !firstPerson;
+    if (!firstPerson && camDist < 1.2) camDist = 7.0;
+  }
   keys.add(e.code);
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code))
     e.preventDefault();
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
 
-// --- Movement / jump state --------------------------------------------------
+// --- Movement / jump --------------------------------------------------------
 let vy = 0;
 const GRAVITY = -26;
 const JUMP_V = 9;
 const WALK = 7;
 const SPRINT = 12.5;
-
 const clock = new THREE.Clock();
 
 function update(dt) {
-  // Camera offset direction from yaw/pitch.
   const cosP = Math.cos(pitch);
   const dir = new THREE.Vector3(cosP * Math.sin(yaw), Math.sin(pitch), cosP * Math.cos(yaw));
 
-  // Horizontal forward/right derived from the camera, so WASD is view-relative.
+  // View-relative horizontal axes.
   const forward = new THREE.Vector3(-dir.x, 0, -dir.z).normalize();
   const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
 
@@ -202,18 +297,24 @@ function update(dt) {
     move.normalize();
     hero.position.x += move.x * speed * dt;
     hero.position.z += move.z * speed * dt;
-    // Face travel direction, smoothly.
     const targetYaw = Math.atan2(move.x, move.z);
     hero.rotation.y = lerpAngle(hero.rotation.y, targetYaw, 0.2);
   }
 
-  // Keep the hero on the platform.
-  const d = Math.hypot(hero.position.x, hero.position.z);
-  if (d > PLATFORM_R - 1.5) {
-    const k = (PLATFORM_R - 1.5) / d;
-    hero.position.x *= k;
-    hero.position.z *= k;
+  // Collision: push out of solid columns / boss, then clamp to the walls.
+  for (const o of obstacles) {
+    const dx = hero.position.x - o.x;
+    const dz = hero.position.z - o.z;
+    const d = Math.hypot(dx, dz);
+    const min = o.r + HERO_R;
+    if (d < min && d > 0.0001) {
+      const k = min / d;
+      hero.position.x = o.x + dx * k;
+      hero.position.z = o.z + dz * k;
+    }
   }
+  hero.position.x = Math.max(-HALF_W, Math.min(HALF_W, hero.position.x));
+  hero.position.z = Math.max(Z_FAR, Math.min(Z_NEAR, hero.position.z));
 
   // Jump + gravity.
   if (keys.has('Space') && hero.position.y <= 0.001) vy = JUMP_V;
@@ -224,18 +325,26 @@ function update(dt) {
     vy = 0;
   }
 
-  // Place the camera behind/above the hero and look at its head.
-  const head = new THREE.Vector3(hero.position.x, hero.position.y + 1.4, hero.position.z);
-  camera.position.copy(head).addScaledVector(dir, camDist);
-  camera.lookAt(head);
+  // Aim arrow follows the camera-forward heading (where attacks will fire).
+  aimArrow.position.set(hero.position.x, 0.12, hero.position.z);
+  aimArrow.setDirection(forward);
+  aimArrow.visible = !firstPerson;
 
-  // Idle life: pulse the boss core, drift the background rocks.
+  // Camera placement.
+  heroBody.visible = !firstPerson;
+  blade.visible = !firstPerson;
+  const eye = new THREE.Vector3(hero.position.x, hero.position.y + 1.45, hero.position.z);
+  if (firstPerson) {
+    camera.position.copy(eye);
+    camera.lookAt(eye.clone().sub(dir));
+  } else {
+    camera.position.copy(eye).addScaledVector(dir, camDist);
+    camera.lookAt(eye);
+  }
+
+  // Idle life on the boss.
   bossCore.rotation.y += dt * 0.6;
   bossCore.material.emissiveIntensity = 1.1 + Math.sin(performance.now() / 350) * 0.4;
-  for (const r of rocks) {
-    r.mesh.rotation.y += r.spin * dt;
-    r.mesh.position.y += Math.sin(performance.now() / 1000 + r.mesh.position.x) * dt * 0.3;
-  }
 }
 
 function lerpAngle(a, b, t) {
@@ -244,29 +353,51 @@ function lerpAngle(a, b, t) {
   return a + diff * t;
 }
 
-function makeGridTexture() {
-  const s = 512;
+// --- Procedural floor texture: green field + purple knotwork runner ---------
+function makeKnotTexture() {
+  const W = 560;
+  const H = 1024;
   const cv = document.createElement('canvas');
-  cv.width = cv.height = s;
+  cv.width = W;
+  cv.height = H;
   const g = cv.getContext('2d');
-  g.fillStyle = '#7a839c';
-  g.fillRect(0, 0, s, s);
-  g.strokeStyle = 'rgba(40,46,64,0.55)';
-  g.lineWidth = 2;
-  const cells = 8;
-  for (let i = 0; i <= cells; i++) {
-    const p = (i / cells) * s;
-    g.beginPath();
-    g.moveTo(p, 0);
-    g.lineTo(p, s);
-    g.moveTo(0, p);
-    g.lineTo(s, p);
-    g.stroke();
+
+  // Green field with a darker border.
+  g.fillStyle = '#33571f';
+  g.fillRect(0, 0, W, H);
+  g.fillStyle = '#46732f';
+  g.fillRect(W * 0.12, H * 0.06, W * 0.76, H * 0.88); // inner runner
+
+  // Interlocking purple circles form a knotwork lattice. Three passes
+  // (shadow / body / highlight) fake the over-under weave.
+  const cx0 = W * 0.5;
+  const top = H * 0.1;
+  const bottom = H * 0.9;
+  const s = 92; // lattice spacing
+  const r = s * 0.62;
+
+  function lattice(strokeStyle, lineWidth) {
+    g.strokeStyle = strokeStyle;
+    g.lineWidth = lineWidth;
+    for (let y = top; y <= bottom; y += s) {
+      for (let col = -1; col <= 1; col++) {
+        const x = cx0 + col * s;
+        g.beginPath();
+        g.arc(x, y, r, 0, Math.PI * 2);
+        g.stroke();
+        // Offset row for the interlace.
+        g.beginPath();
+        g.arc(x + s / 2, y + s / 2, r, 0, Math.PI * 2);
+        g.stroke();
+      }
+    }
   }
+  lattice('#241043', 22); // shadow
+  lattice('#7a4fc0', 14); // purple body
+  lattice('#b187e6', 3); // highlight
+
   const tex = new THREE.CanvasTexture(cv);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(4, 4);
-  tex.anisotropy = 4;
+  tex.anisotropy = 8;
   return tex;
 }
 

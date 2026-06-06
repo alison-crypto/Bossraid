@@ -3,40 +3,56 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bossraid — 3D Feel Test</title>
+    <title>Bossraid — Floor 1 Boss Hall (engine test)</title>
     <style>
       * { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; overflow: hidden; background: #0a0e16; font-family: 'Trebuchet MS', system-ui, sans-serif; color: #eef; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #05060a; font-family: 'Trebuchet MS', system-ui, sans-serif; color: #eef; }
       #c { display: block; width: 100%; height: 100%; }
       #hud {
         position: fixed; left: 16px; top: 14px; pointer-events: none;
-        text-shadow: 0 1px 3px rgba(0,0,0,0.8); line-height: 1.5; font-size: 14px;
+        text-shadow: 0 1px 3px rgba(0,0,0,0.85); line-height: 1.5; font-size: 14px;
       }
       #hud h1 { margin: 0 0 4px; font-size: 18px; color: #ffd27a; }
       #hud .keys { color: #bcd; }
+      /* Center aim crosshair. */
+      #reticle {
+        position: fixed; left: 50%; top: 50%; width: 26px; height: 26px;
+        transform: translate(-50%, -50%); pointer-events: none; opacity: 0.9; z-index: 4;
+        display: none;
+      }
+      #reticle::before, #reticle::after {
+        content: ''; position: absolute; background: rgba(120,230,255,0.95);
+        box-shadow: 0 0 4px rgba(0,0,0,0.8);
+      }
+      #reticle::before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); }
+      #reticle::after { top: 50%; left: 0; height: 2px; width: 100%; transform: translateY(-50%); }
       #hint {
         position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-        background: rgba(6,8,14,0.55); cursor: pointer; transition: opacity .3s; z-index: 5;
+        background: rgba(6,8,14,0.6); cursor: pointer; transition: opacity .3s; z-index: 5;
       }
       #hint div { text-align: center; }
       #hint .big { font-size: 26px; color: #ffd27a; margin-bottom: 8px; }
-      #hint .sub { font-size: 15px; color: #cdd; }
+      #hint .sub { font-size: 15px; color: #cdd; line-height: 1.5; }
       #hint.hidden { opacity: 0; pointer-events: none; }
     </style>
   </head>
   <body>
     <canvas id="c"></canvas>
+    <div id="reticle"></div>
     <div id="hud">
-      <h1>3D Feel Test</h1>
+      <h1>Floor 1 — Boss Hall (engine test)</h1>
       <div class="keys">
-        <b>WASD</b> move &nbsp;·&nbsp; <b>Mouse</b> look &nbsp;·&nbsp;
-        <b>Shift</b> sprint &nbsp;·&nbsp; <b>Space</b> jump &nbsp;·&nbsp; <b>Esc</b> release mouse
+        <b>WASD</b> move &nbsp;·&nbsp; <b>Mouse</b> look &nbsp;·&nbsp; <b>V</b> 1st/3rd person &nbsp;·&nbsp;
+        <b>Wheel</b> zoom &nbsp;·&nbsp; <b>Shift</b> sprint &nbsp;·&nbsp; <b>Space</b> jump &nbsp;·&nbsp; <b>Esc</b> free mouse
       </div>
     </div>
     <div id="hint">
       <div>
         <div class="big">Click to enter</div>
-        <div class="sub">Walk around the floating boss platform — feel test, no combat yet.<br />Move the mouse to look (or click-and-drag if your browser keeps the cursor visible).</div>
+        <div class="sub">
+          Walk the hall toward the throne — feel test, no combat yet.<br />
+          Move the mouse to look (or click-and-drag if the cursor stays visible). Press <b>V</b> for first person.
+        </div>
       </div>
     </div>
 
