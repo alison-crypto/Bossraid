@@ -150,6 +150,18 @@ from equipment) and applied in `Main.gd`:
 - Tuning lives in constants at the top of `Main.gd`; a `Bossraid stats: …` line
   prints the resolved values on launch.
 
+## Weapons
+
+Data-driven in `GameState.weapons` (each: `light` combo of clip names, `heavy`
+clip, `ranged`, `dmg`/`speed` mults, placeholder `len`/`thick`/`color` mesh).
+`Main._equip_weapon()` rebuilds the held mesh + resets the combo; `_do_melee`/
+`_do_heavy` read the active weapon. Switch in-game with **Tab** (cycle) or
+**1–6**; HUD shows the name. Clips merged for weapons: Slash, SlashB, Heavy,
+Stab, Bow. Held meshes are placeholder boxes until real weapon models arrive.
+Still TODO (see chat): a clickable weapon/keybind menu (needs an InputMap-action
+refactor for remapping), per-weapon mesh offset/orientation, bow draw anim,
+crouch, and distinct axe/dagger/double-sword clips.
+
 ## Do / don't
 
 - Do keep it runnable after every change; commit small. Tabs, not spaces.

@@ -86,6 +86,7 @@ var skel: Skeleton3D
 var weapon: MeshInstance3D
 var weapon_attach: BoneAttachment3D
 var weapon_scaled := false
+var weapon_offset := WEAPON_OFFSET
 var has_weapon := true # false for characters with a built-in weapon (e.g. Maria)
 var model_facing := 0.0
 
@@ -136,6 +137,7 @@ var projectiles: Array = []
 var hud_player_fill: ColorRect
 var hud_boss_fill: ColorRect
 var hud_banner: Label
+var hud_weapon: Label
 
 
 func _ready() -> void:
@@ -337,6 +339,13 @@ func _build_hud() -> void:
 	hud_banner.modulate = Color(1, 1, 1, 0)
 	root.add_child(hud_banner)
 
+	# Weapon name (bottom-left). [Tab] cycles, [1-6] pick directly.
+	hud_weapon = Label.new()
+	hud_weapon.position = Vector2(24, 660)
+	hud_weapon.add_theme_font_size_override("font_size", 18)
+	root.add_child(hud_weapon)
+	_update_weapon_hud()
+
 
 func _rect(c: Color, pos: Vector2, sz: Vector2) -> ColorRect:
 	var r := ColorRect.new()
@@ -375,6 +384,9 @@ func _setup_animation() -> void:
 		kick_anim = AnimUtil.merge(anim, skel, "res://models/anim/kick.glb", "Kick")
 		block_anim = AnimUtil.merge(anim, skel, "res://models/anim/block.glb", "Block")
 		dodge_anim = AnimUtil.merge(anim, skel, "res://models/anim/dodge.glb", "Dodge")
+		# Weapon-specific attack clips (used by the weapon table in GameState).
+		AnimUtil.merge(anim, skel, "res://models/anim/stab.glb", "Stab")
+		AnimUtil.merge(anim, skel, "res://models/anim/bowshoot.glb", "Bow")
 		if idle_anim == "" and m_idle != "":
 			idle_anim = m_idle
 		if run_anim == "" and m_run != "":
@@ -397,6 +409,8 @@ func _setup_animation() -> void:
 	_set_loop(kick_anim, false)
 	_set_loop(block_anim, true) # held
 	_set_loop(dodge_anim, false)
+	_set_loop("Stab", false)
+	_set_loop("Bow", false)
 	anim.animation_finished.connect(_on_anim_finished)
 	if idle_anim != "":
 		anim.play(idle_anim)
@@ -423,7 +437,7 @@ func _boss_play(anim_name: String) -> void:
 
 func _on_anim_finished(finished_name) -> void:
 	var n := String(finished_name)
-	if n == attack_anim or n == attack_anim2 or n == heavy_anim or n == kick_anim:
+	if n in [attack_anim, attack_anim2, heavy_anim, kick_anim, "Stab", "Bow"]:
 		attacking = false
 		cur_anim = "" # let _physics_process resume idle/run
 
@@ -458,16 +472,41 @@ func _attach_weapon() -> void:
 	weapon_attach = BoneAttachment3D.new()
 	weapon_attach.bone_idx = hand
 	skel.add_child(weapon_attach)
+	_build_weapon_mesh()
+
+
+# (Re)build the held weapon mesh from the current weapon's data. A placeholder
+# box of len x thick until real weapon models are added.
+func _build_weapon_mesh() -> void:
+	if weapon_attach == null:
+		return
+	if weapon and is_instance_valid(weapon):
+		weapon.queue_free()
+	var w: Dictionary = GameState.weapon_data()
+	var length: float = w.get("len", 1.1)
+	var thick: float = w.get("thick", 0.06)
 	weapon = MeshInstance3D.new()
 	var blade := BoxMesh.new()
-	blade.size = Vector3(0.06, 0.06, 1.1)
+	blade.size = Vector3(thick, thick, length)
 	var bm := StandardMaterial3D.new()
-	bm.albedo_color = Color(0.85, 0.9, 1.0)
+	bm.albedo_color = w.get("color", Color(0.85, 0.9, 1.0))
 	bm.metallic = 0.6
 	blade.material = bm
 	weapon.mesh = blade
 	weapon.rotation_degrees = WEAPON_EULER
 	weapon_attach.add_child(weapon)
+	# Grip at the hand, blade extending out: offset half the length up the stood-up blade.
+	weapon_offset = Vector3(0, length * 0.5, 0)
+	weapon_scaled = false # re-apply the hand-bone counter-scale next frame
+
+
+# Switch the active weapon: rebuild the held mesh, reset the combo, update HUD.
+func _equip_weapon(i: int) -> void:
+	GameState.weapon = clampi(i, 0, GameState.weapons.size() - 1)
+	combo_i = 0
+	if has_weapon:
+		_build_weapon_mesh()
+	_update_weapon_hud()
 
 
 func _play(anim_name: String) -> void:
@@ -491,6 +530,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		_do_dodge()
 	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F:
 		_do_kick()
+	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_TAB:
+		_equip_weapon((GameState.weapon + 1) % GameState.weapons.size())
+	elif event is InputEventKey and event.pressed and not event.echo and event.keycode >= KEY_1 and event.keycode <= KEY_6:
+		_equip_weapon(event.keycode - KEY_1)
 	elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
@@ -572,7 +615,7 @@ func _physics_process(delta: float) -> void:
 		var s: float = weapon_attach.global_transform.basis.get_scale().x
 		if s > 0.0001:
 			weapon.scale = Vector3.ONE / s
-			weapon.position = WEAPON_OFFSET / s
+			weapon.position = weapon_offset / s
 			weapon_scaled = true
 
 	_update_boss(delta)
@@ -689,28 +732,38 @@ func _do_melee() -> void:
 	# One swing at a time: can't re-attack until the current swing finishes.
 	if player_dead or attacking or dodging or blocking or melee_cd > 0.0:
 		return
-	# Alternate outward/inward slash so repeated clicks read as a combo.
-	var clip := attack_anim if combo_i % 2 == 0 else attack_anim2
+	var w: Dictionary = GameState.weapon_data()
+	if w.get("ranged", false):
+		_do_ranged()
+		return
+	# Cycle the weapon's light-attack combo.
+	var combo: Array = w.get("light", [attack_anim])
+	var clip := String(combo[combo_i % combo.size()])
 	combo_i += 1
-	attack_mult = 1.0
+	attack_mult = float(w.get("dmg", 1.0))
 	attack_kick = false
 	if clip != "" and anim and anim.has_animation(clip):
-		_start_swing(clip, ATTACK_SPEED)
+		_start_swing(clip, ATTACK_SPEED * float(w.get("speed", 1.0)))
 	else:
 		# No swing clip: fall back to an instant hit on a fixed cooldown.
 		melee_cd = 0.45
 		_apply_melee_hit()
 
 
-# Right-click: a slower, harder overhead.
+# Right-click: a slower, harder strike (weapon's heavy clip, scaled damage).
 func _do_heavy() -> void:
 	if player_dead or attacking or dodging or blocking or aiming:
 		return
-	if heavy_anim == "" or anim == null or not anim.has_animation(heavy_anim):
+	var w: Dictionary = GameState.weapon_data()
+	if w.get("ranged", false):
+		_do_ranged()
 		return
-	attack_mult = HEAVY_MULT
+	var clip := String(w.get("heavy", heavy_anim))
+	if clip == "" or anim == null or not anim.has_animation(clip):
+		return
+	attack_mult = float(w.get("dmg", 1.0)) * HEAVY_MULT
 	attack_kick = false
-	_start_swing(heavy_anim, HEAVY_SPEED)
+	_start_swing(clip, HEAVY_SPEED * float(w.get("speed", 1.0)))
 
 
 # F: a quick kick that pokes for light damage and knocks the boss back.
@@ -885,6 +938,11 @@ func _banner(text: String) -> void:
 	var tw := create_tween()
 	tw.tween_interval(1.0)
 	tw.tween_property(hud_banner, "modulate:a", 0.0, 1.2)
+
+
+func _update_weapon_hud() -> void:
+	if hud_weapon:
+		hud_weapon.text = "⚔ %s   [Tab] / [1-6] switch" % String(GameState.weapon_data().get("name", "Sword"))
 
 
 func _update_hud() -> void:
