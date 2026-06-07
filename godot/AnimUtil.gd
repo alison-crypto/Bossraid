@@ -46,6 +46,8 @@ static func merge(target_anim: AnimationPlayer, target_skel: Skeleton3D, glb_pat
 			out.rotation_track_insert_key(nt, source_anim.track_get_key_time(ti, ki), source_anim.track_get_key_value(ti, ki))
 		added += 1
 	inst.queue_free()
+	print("AnimUtil.merge ", glb_path.get_file(), " -> ", new_name,
+		": skel='", skel_rel, "' src_tracks=", source_anim.get_track_count(), " added=", added)
 	if added == 0:
 		return ""
 
