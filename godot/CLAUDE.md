@@ -139,11 +139,19 @@ the specific page when you need exact API; the high-value areas for us:
 Defined per character in `GameState.characters` (`str`/`dex`/`con`, `def` later
 from equipment) and applied in `Main.gd`:
 
-- **Impact force** `F = mass · accel`, with `mass = STR·1`, `accel = DEX·0.1` →
-  `F = STR·DEX·0.1`. Melee damage = `F · DAMAGE_K · type_mult` (light 1.0, heavy
-  `HEAVY_MULT`, kick 0.6). `DAMAGE_K` scales raw force into game damage.
+- **Force term** `base = mass · accel`, `mass = STR`, `accel = DEX · 0.01` →
+  `base = STR·DEX·0.01`.
+  - **Light** = `base + weapon_damage`
+  - **Heavy** = `(base + weapon_damage) · (1.5 + 0.01·floor(STR/10))`
+  - **Kick** = `base + boots_damage` (ignores weapon; uses boots/equipment)
+  - `weapon_damage` is a flat additive per weapon (`GameState.weapons[].damage`).
 - **DEX also speeds swings**: each point removes `DEX_ANIM_PER_PT` (0.01s) from a
-  swing, so higher DEX = faster attacks + faster attack rate.
+  swing (faster attacks + rate). Set via `_start_swing`.
+- **Ranged (bow)** = kinetic-energy projectile: arrow `mass = AMMO_MASS +
+  STR·MASS_PER_STR`, launch speed `v0 = BOW_BASE_V + DEX·V_PER_DEX`, then
+  per-frame **gravity** + **quadratic drag/mass** (heavier arrows fly farther).
+  Impact damage `= 0.5·mass·v² + bow_damage`; range emerges from v0 + mass.
+  (`_do_ranged` + projectile loop in `_update_combat`.)
 - **Max Health** `= CON · STR · HEALTH_K`.
 - **DEF** (equipment, 0 for now) **subtracts directly** from incoming damage,
   after block/parry reduction.
