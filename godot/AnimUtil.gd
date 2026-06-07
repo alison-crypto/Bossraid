@@ -64,8 +64,15 @@ static func merge(target_anim: AnimationPlayer, target_skel: Skeleton3D, glb_pat
 		if not bone_by_key.has(key):
 			skipped_bone += 1
 			continue
+		var tname: String = bone_by_key[key]
+		# Skip the root bone's rotation: it re-orients the whole body to the
+		# clip's forward, which fights the gameplay model-facing (the character
+		# would face backward). Gameplay drives facing via the model node's
+		# rotation; the clip only contributes limb/spine motion.
+		if ttype == Animation.TYPE_ROTATION_3D and (key == "hips" or target_skel.get_bone_parent(target_skel.find_bone(tname)) == -1):
+			continue
 		var nt := out.add_track(ttype)
-		out.track_set_path(nt, NodePath(skel_rel + ":" + bone_by_key[key]))
+		out.track_set_path(nt, NodePath(skel_rel + ":" + tname))
 		for ki in source_anim.track_get_key_count(ti):
 			if ttype == Animation.TYPE_ROTATION_3D:
 				out.rotation_track_insert_key(nt, source_anim.track_get_key_time(ti, ki), source_anim.track_get_key_value(ti, ki))
