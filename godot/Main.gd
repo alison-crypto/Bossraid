@@ -81,6 +81,7 @@ var hud_banner: Label
 
 
 func _ready() -> void:
+	print("Bossraid build: facing-v3 (idle-facing + per-rig flip + vertical hips)")
 	_build_environment()
 	_build_ground()
 	_build_dummy(dummy_pos)
@@ -427,8 +428,12 @@ func _physics_process(delta: float) -> void:
 		player.velocity.y = JUMP
 	player.move_and_slide()
 
-	if dir.length() > 0.1 and model:
-		var target := atan2(dir.x, dir.z) + (PI if face_flip else 0.0)
+	# Face the model toward movement; when idle, face where the camera looks (so
+	# the character keeps its back to the camera instead of snapping to its rest
+	# orientation). face_flip aligns the model's forward with this (rig-dependent).
+	if model:
+		var face_dir := dir if dir.length() > 0.1 else fwd
+		var target := atan2(face_dir.x, face_dir.z) + (PI if face_flip else 0.0)
 		model_facing = lerp_angle(model_facing, target, 0.2)
 		model.rotation.y = model_facing
 	# Locomotion animation (suppressed while an attack animation is playing).

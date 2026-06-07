@@ -48,9 +48,7 @@ static func merge(target_anim: AnimationPlayer, target_skel: Skeleton3D, glb_pat
 	var sample_src := ""
 	for ti in source_anim.get_track_count():
 		var ttype := source_anim.track_get_type(ti)
-		# Copy rotations (the retargetable part) and scales; skip positions so a
-		# different rig's bone lengths can't displace/stretch the character.
-		if ttype != Animation.TYPE_ROTATION_3D and ttype != Animation.TYPE_SCALE_3D:
+		if ttype != Animation.TYPE_ROTATION_3D and ttype != Animation.TYPE_SCALE_3D and ttype != Animation.TYPE_POSITION_3D:
 			skipped_type += 1
 			continue
 		var raw := String(source_anim.track_get_path(ti).get_concatenated_subnames())
@@ -65,19 +63,29 @@ static func merge(target_anim: AnimationPlayer, target_skel: Skeleton3D, glb_pat
 			skipped_bone += 1
 			continue
 		var tname: String = bone_by_key[key]
-		# Skip the root bone's rotation: it re-orients the whole body to the
-		# clip's forward, which fights the gameplay model-facing (the character
-		# would face backward). Gameplay drives facing via the model node's
-		# rotation; the clip only contributes limb/spine motion.
-		if ttype == Animation.TYPE_ROTATION_3D and (key == "hips" or target_skel.get_bone_parent(target_skel.find_bone(tname)) == -1):
+		var bidx := target_skel.find_bone(tname)
+		var is_root := key == "hips" or target_skel.get_bone_parent(bidx) == -1
+		# Root rotation re-orients the whole body to the clip's forward, fighting
+		# the gameplay model-facing — drop it (gameplay drives facing). Positions
+		# are only taken from the root, vertical-only: that lets crouched poses
+		# lower the hips (feet stay grounded) without horizontal drift or letting
+		# a different rig's bone lengths stretch the limbs.
+		if ttype == Animation.TYPE_ROTATION_3D and is_root:
+			continue
+		if ttype == Animation.TYPE_POSITION_3D and not is_root:
 			continue
 		var nt := out.add_track(ttype)
 		out.track_set_path(nt, NodePath(skel_rel + ":" + tname))
+		var rest := target_skel.get_bone_rest(bidx).origin
 		for ki in source_anim.track_get_key_count(ti):
+			var t := source_anim.track_get_key_time(ti, ki)
+			var v = source_anim.track_get_key_value(ti, ki)
 			if ttype == Animation.TYPE_ROTATION_3D:
-				out.rotation_track_insert_key(nt, source_anim.track_get_key_time(ti, ki), source_anim.track_get_key_value(ti, ki))
+				out.rotation_track_insert_key(nt, t, v)
+			elif ttype == Animation.TYPE_SCALE_3D:
+				out.scale_track_insert_key(nt, t, v)
 			else:
-				out.scale_track_insert_key(nt, source_anim.track_get_key_time(ti, ki), source_anim.track_get_key_value(ti, ki))
+				out.position_track_insert_key(nt, t, Vector3(rest.x, v.y, rest.z))
 		added += 1
 	inst.queue_free()
 	var sample_tgt: String = target_skel.get_bone_name(0) if target_skel.get_bone_count() > 0 else "?"
