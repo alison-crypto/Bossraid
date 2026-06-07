@@ -172,7 +172,10 @@ func _build_boss(pos: Vector3) -> void:
 		if boss_anim and bsk:
 			boss_idle = AnimUtil.merge(boss_anim, bsk, "res://models/anim/idle.glb", "Idle")
 			boss_walk = AnimUtil.merge(boss_anim, bsk, "res://models/anim/run.glb", "Walk")
-			boss_attack = AnimUtil.merge(boss_anim, bsk, "res://models/anim/hellslam.glb", "Slam")
+			# In-place overhead smash: all arm/spine rotation, so it reads fully
+			# after retarget (a leaping slam loses its punch when root motion is
+			# stripped for facing/grounding).
+			boss_attack = AnimUtil.merge(boss_anim, bsk, "res://models/anim/smash.glb", "Slam")
 			_set_anim_loop(boss_anim, boss_idle, true)
 			_set_anim_loop(boss_anim, boss_walk, true)
 			_set_anim_loop(boss_anim, boss_attack, false)
