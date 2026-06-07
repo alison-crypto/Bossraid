@@ -335,7 +335,11 @@ function rescaleHero() {
   heroModel.rotation.y = (tune.yaw * Math.PI) / 180;
   heroModel.updateWorldMatrix(true, true);
   const box = new THREE.Box3().setFromObject(heroModel);
-  heroModel.position.y -= box.min.y - hero.position.y; // feet on the floor
+  // Guard: skinned meshes can yield an empty/NaN box — don't push the model to
+  // NaN (which makes it vanish).
+  if (!box.isEmpty() && Number.isFinite(box.min.y)) {
+    heroModel.position.y -= box.min.y - hero.position.y; // feet on the floor
+  }
 }
 
 function setupHeroModel(sceneRoot) {
@@ -350,7 +354,8 @@ function setupHeroModel(sceneRoot) {
   heroModel.scale.setScalar(1);
   heroModel.updateWorldMatrix(true, true); // so nested-transform models measure right
   const box = new THREE.Box3().setFromObject(heroModel);
-  heroNaturalHeight = box.max.y - box.min.y || 1;
+  const h = box.max.y - box.min.y;
+  heroNaturalHeight = Number.isFinite(h) && h > 0.01 ? h : 1.8; // guard empty box
   hero.add(heroModel);
   rescaleHero();
   heroBody.visible = false; // hide the capsule
@@ -372,10 +377,18 @@ function setupHeroModel(sceneRoot) {
 // Build the action set from a model's embedded clips (idle / run|walk /
 // attack — punch|slash|attack|melee). The attack plays once and then hands
 // back to locomotion via the mixer 'finished' event.
-function buildActions(clips) {
+// A clip is only usable if it actually animates (has tracks + real duration).
+// Mixamo character exports often carry a 1-frame pose clip we must ignore.
+function usableClips(clips) {
+  return (clips || []).filter((c) => c.tracks.length > 0 && c.duration > 0.05);
+}
+
+function buildActions(clips, fallback) {
   if (!mixer) return;
-  const find = (re) => clips.find((a) => re.test(a.name));
-  const idleClip = find(/idle/i) || clips[0];
+  let pool = usableClips(clips);
+  if (!pool.length) pool = usableClips(fallback); // borrow shared Mixamo locomotion
+  const find = (re) => pool.find((a) => re.test(a.name));
+  const idleClip = find(/idle/i) || pool[0];
   const runClip = find(/run|walk|jog/i) || idleClip;
   const attackClip = find(/punch|slash|attack|melee|sword|stab|swing/i);
   anim.idle = idleClip ? mixer.clipAction(idleClip) : null;
@@ -407,7 +420,18 @@ function loadCharacter(file) {
     `./models/${file}`,
     (gltf) => {
       setupHeroModel(gltf.scene);
-      buildActions(gltf.animations);
+      if (usableClips(gltf.animations).length) {
+        buildActions(gltf.animations);
+      } else {
+        // No animation in the model (common for Mixamo character-only exports):
+        // borrow Soldier's idle/run (same Mixamo rig retargets by bone name).
+        new GLTFLoader().load(
+          './models/Soldier.glb',
+          (s) => buildActions(gltf.animations, s.animations),
+          undefined,
+          () => buildActions(gltf.animations)
+        );
+      }
     },
     undefined,
     () => {

@@ -2,6 +2,7 @@
 // entry here — the select screen and the hall pick it up automatically.
 // Models should have embedded idle/run (or walk) animations.
 export const CHARACTERS = [
+  { id: 'erika', name: 'Erika Archer', file: 'Erika.glb' },
   { id: 'soldier', name: 'Soldier', file: 'Soldier.glb' },
   { id: 'robot', name: 'Robot', file: 'RobotExpressive.glb' },
 ];
