@@ -16,7 +16,6 @@ const MOUSE_SENS := 0.0025
 const CHARACTER := "res://models/Soldier.glb"
 const MODEL_FACE_FLIP := true # set false if the character faces backward
 const MELEE_RANGE := 2.6
-const PROJ_SPEED := 24.0
 # Held-sword placement relative to the right-hand bone. If the blade points the
 # wrong way, tune these two (EULER is degrees) — the correct values are
 # rig-dependent. Default: stand the blade up out of the fist.
@@ -35,10 +34,31 @@ const DODGE_IFRAMES := 0.5
 # damage; a hit in the first PARRY_WINDOW of a block is fully parried. Kick (F):
 # quick poke + knockback. Aim (hold middle-mouse): pulls the camera in to shoot.
 const HEAVY_SPEED := 1.0
-const HEAVY_MULT := 2.2
 const BLOCK_REDUCTION := 0.2 # fraction of damage still taken while blocking
 const PARRY_WINDOW := 0.3
 const KICK_KNOCKBACK := 6.0
+
+# --- RPG stats / damage (owner's physics formulas) ------------------------
+# Melee force F = mass*accel, mass = STR, accel = DEX*0.01  ->  base = STR*DEX*0.01.
+#   Light  = base + weapon_damage
+#   Heavy  = (base + weapon_damage) * (1.5 + 0.01*floor(STR/10))
+#   Kick   = base + boots_damage   (ignores weapon; uses boots/equipment)
+# DEX also shaves DEX_ANIM_PER_PT seconds off each swing. HP = CON*STR*HEALTH_K.
+# DEF (equipment) subtracts directly from incoming damage.
+const ACCEL_PER_DEX := 0.01    # acceleration per DEX point (a = DEX*0.01)
+const HEAVY_BASE_MULT := 1.5   # heavy multiplier base
+const HEAVY_STR_STEP := 0.01   # +this per full 10 STR
+const HEALTH_K := 1.0          # Health = CON * STR * HEALTH_K
+const DEX_ANIM_PER_PT := 0.01  # seconds removed from a swing per DEX point
+# Ranged bow (kinetic-energy arrow): mass from STR, launch speed from DEX, then
+# gravity + quadratic drag (drag/mass, so heavier arrows fly farther). Impact
+# damage = 0.5*mass*v^2 + bow_damage. Range emerges from v0 and mass.
+const AMMO_MASS := 0.1
+const MASS_PER_STR := 0.01
+const BOW_BASE_V := 10.0
+const V_PER_DEX := 0.7
+const ARROW_DRAG := 0.0006
+const RANGED_CD := 0.4
 
 const PLAYER_MAX := 100.0
 const BOSS_MAX := 400.0
@@ -64,8 +84,7 @@ var block_anim := ""
 var dodge_anim := ""
 var combo_i := 0
 var attacking := false
-var attack_mult := 1.0  # damage scale for the in-flight swing (heavy vs light)
-var attack_kick := false # current swing is a kick (applies knockback)
+var attack_kind := "light" # "light" | "heavy" | "kick" — drives the damage formula
 var dodging := false
 var dodge_t := 0.0
 var dodge_dir := Vector3.FORWARD
@@ -78,9 +97,16 @@ var skel: Skeleton3D
 var weapon: MeshInstance3D
 var weapon_attach: BoneAttachment3D
 var weapon_scaled := false
+var weapon_offset := WEAPON_OFFSET
 var has_weapon := true # false for characters with a built-in weapon (e.g. Maria)
 var model_facing := 0.0
 
+var player_str := 10
+var player_dex := 10
+var player_con := 10
+var player_def := 0 # from equipment (none yet)
+var player_boots_dmg := 0 # kick damage source (boots/equipment; none yet)
+var player_max := PLAYER_MAX
 var player_hp := PLAYER_MAX
 var player_invuln := 0.0
 var player_dead := false
@@ -123,6 +149,7 @@ var projectiles: Array = []
 var hud_player_fill: ColorRect
 var hud_boss_fill: ColorRect
 var hud_banner: Label
+var hud_weapon: Label
 
 
 func _ready() -> void:
@@ -260,6 +287,14 @@ func _build_player(pos: Vector3) -> void:
 	var entry: Dictionary = GameState.current() # autoload; defaults to first character
 	face_flip = entry.get("flip", true)
 	has_weapon = entry.get("weapon", true)
+	player_str = int(entry.get("str", 10))
+	player_dex = int(entry.get("dex", 10))
+	player_con = int(entry.get("con", 10))
+	player_def = int(entry.get("def", 0))
+	player_boots_dmg = int(entry.get("boots", 0))
+	player_max = max(1.0, float(player_con) * float(player_str) * HEALTH_K)
+	player_hp = player_max
+	print("Bossraid stats: STR=%d DEX=%d CON=%d DEF=%d -> HP=%.0f force=%.2f (light w/50dmg=%.0f)" % [player_str, player_dex, player_con, player_def, player_max, _force_base(), _force_base() + 50.0])
 	var scene := load(entry.get("file", CHARACTER))
 	if scene:
 		model = scene.instantiate()
@@ -317,6 +352,13 @@ func _build_hud() -> void:
 	hud_banner.modulate = Color(1, 1, 1, 0)
 	root.add_child(hud_banner)
 
+	# Weapon name (bottom-left). [Tab] cycles, [1-6] pick directly.
+	hud_weapon = Label.new()
+	hud_weapon.position = Vector2(24, 660)
+	hud_weapon.add_theme_font_size_override("font_size", 18)
+	root.add_child(hud_weapon)
+	_update_weapon_hud()
+
 
 func _rect(c: Color, pos: Vector2, sz: Vector2) -> ColorRect:
 	var r := ColorRect.new()
@@ -355,6 +397,9 @@ func _setup_animation() -> void:
 		kick_anim = AnimUtil.merge(anim, skel, "res://models/anim/kick.glb", "Kick")
 		block_anim = AnimUtil.merge(anim, skel, "res://models/anim/block.glb", "Block")
 		dodge_anim = AnimUtil.merge(anim, skel, "res://models/anim/dodge.glb", "Dodge")
+		# Weapon-specific attack clips (used by the weapon table in GameState).
+		AnimUtil.merge(anim, skel, "res://models/anim/stab.glb", "Stab")
+		AnimUtil.merge(anim, skel, "res://models/anim/bowshoot.glb", "Bow")
 		if idle_anim == "" and m_idle != "":
 			idle_anim = m_idle
 		if run_anim == "" and m_run != "":
@@ -377,6 +422,8 @@ func _setup_animation() -> void:
 	_set_loop(kick_anim, false)
 	_set_loop(block_anim, true) # held
 	_set_loop(dodge_anim, false)
+	_set_loop("Stab", false)
+	_set_loop("Bow", false)
 	anim.animation_finished.connect(_on_anim_finished)
 	if idle_anim != "":
 		anim.play(idle_anim)
@@ -403,7 +450,7 @@ func _boss_play(anim_name: String) -> void:
 
 func _on_anim_finished(finished_name) -> void:
 	var n := String(finished_name)
-	if n == attack_anim or n == attack_anim2 or n == heavy_anim or n == kick_anim:
+	if n in [attack_anim, attack_anim2, heavy_anim, kick_anim, "Stab", "Bow"]:
 		attacking = false
 		cur_anim = "" # let _physics_process resume idle/run
 
@@ -438,16 +485,41 @@ func _attach_weapon() -> void:
 	weapon_attach = BoneAttachment3D.new()
 	weapon_attach.bone_idx = hand
 	skel.add_child(weapon_attach)
+	_build_weapon_mesh()
+
+
+# (Re)build the held weapon mesh from the current weapon's data. A placeholder
+# box of len x thick until real weapon models are added.
+func _build_weapon_mesh() -> void:
+	if weapon_attach == null:
+		return
+	if weapon and is_instance_valid(weapon):
+		weapon.queue_free()
+	var w: Dictionary = GameState.weapon_data()
+	var length: float = w.get("len", 1.1)
+	var thick: float = w.get("thick", 0.06)
 	weapon = MeshInstance3D.new()
 	var blade := BoxMesh.new()
-	blade.size = Vector3(0.06, 0.06, 1.1)
+	blade.size = Vector3(thick, thick, length)
 	var bm := StandardMaterial3D.new()
-	bm.albedo_color = Color(0.85, 0.9, 1.0)
+	bm.albedo_color = w.get("color", Color(0.85, 0.9, 1.0))
 	bm.metallic = 0.6
 	blade.material = bm
 	weapon.mesh = blade
 	weapon.rotation_degrees = WEAPON_EULER
 	weapon_attach.add_child(weapon)
+	# Grip at the hand, blade extending out: offset half the length up the stood-up blade.
+	weapon_offset = Vector3(0, length * 0.5, 0)
+	weapon_scaled = false # re-apply the hand-bone counter-scale next frame
+
+
+# Switch the active weapon: rebuild the held mesh, reset the combo, update HUD.
+func _equip_weapon(i: int) -> void:
+	GameState.weapon = clampi(i, 0, GameState.weapons.size() - 1)
+	combo_i = 0
+	if has_weapon:
+		_build_weapon_mesh()
+	_update_weapon_hud()
 
 
 func _play(anim_name: String) -> void:
@@ -471,6 +543,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		_do_dodge()
 	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F:
 		_do_kick()
+	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_TAB:
+		_equip_weapon((GameState.weapon + 1) % GameState.weapons.size())
+	elif event is InputEventKey and event.pressed and not event.echo and event.keycode >= KEY_1 and event.keycode <= KEY_6:
+		_equip_weapon(event.keycode - KEY_1)
 	elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
@@ -552,7 +628,7 @@ func _physics_process(delta: float) -> void:
 		var s: float = weapon_attach.global_transform.basis.get_scale().x
 		if s > 0.0001:
 			weapon.scale = Vector3.ONE / s
-			weapon.position = WEAPON_OFFSET / s
+			weapon.position = weapon_offset / s
 			weapon_scaled = true
 
 	_update_boss(delta)
@@ -623,7 +699,8 @@ func _damage_player(dmg: int) -> void:
 			player_invuln = 0.4
 			return
 		dmg = int(round(dmg * BLOCK_REDUCTION)) # blocked: chip damage only
-	player_hp = max(0.0, player_hp - dmg)
+	var taken := max(0, dmg - player_def) # equipment defence subtracts directly
+	player_hp = max(0.0, player_hp - taken)
 	player_invuln = 0.7
 	if player_hp <= 0.0:
 		_player_die()
@@ -635,7 +712,7 @@ func _player_die() -> void:
 	await get_tree().create_timer(1.6).timeout
 	player.global_position = player_spawn
 	player.velocity = Vector3.ZERO
-	player_hp = PLAYER_MAX
+	player_hp = player_max
 	player_dead = false
 
 
@@ -668,47 +745,74 @@ func _do_melee() -> void:
 	# One swing at a time: can't re-attack until the current swing finishes.
 	if player_dead or attacking or dodging or blocking or melee_cd > 0.0:
 		return
-	# Alternate outward/inward slash so repeated clicks read as a combo.
-	var clip := attack_anim if combo_i % 2 == 0 else attack_anim2
+	var w: Dictionary = GameState.weapon_data()
+	if w.get("ranged", false):
+		_do_ranged()
+		return
+	# Cycle the weapon's light-attack combo.
+	var combo: Array = w.get("light", [attack_anim])
+	var clip := String(combo[combo_i % combo.size()])
 	combo_i += 1
-	attack_mult = 1.0
-	attack_kick = false
+	attack_kind = "light"
 	if clip != "" and anim and anim.has_animation(clip):
-		_start_swing(clip, ATTACK_SPEED)
+		_start_swing(clip, ATTACK_SPEED * float(w.get("speed", 1.0)))
 	else:
 		# No swing clip: fall back to an instant hit on a fixed cooldown.
 		melee_cd = 0.45
 		_apply_melee_hit()
 
 
-# Right-click: a slower, harder overhead.
+# Right-click: a slower, harder strike (weapon's heavy clip, scaled damage).
 func _do_heavy() -> void:
 	if player_dead or attacking or dodging or blocking or aiming:
 		return
-	if heavy_anim == "" or anim == null or not anim.has_animation(heavy_anim):
+	var w: Dictionary = GameState.weapon_data()
+	if w.get("ranged", false):
+		_do_ranged()
 		return
-	attack_mult = HEAVY_MULT
-	attack_kick = false
-	_start_swing(heavy_anim, HEAVY_SPEED)
+	var clip := String(w.get("heavy", heavy_anim))
+	if clip == "" or anim == null or not anim.has_animation(clip):
+		return
+	attack_kind = "heavy"
+	_start_swing(clip, HEAVY_SPEED * float(w.get("speed", 1.0)))
 
 
-# F: a quick kick that pokes for light damage and knocks the boss back.
+# F: a quick kick that pokes (boots damage) and knocks the boss back.
 func _do_kick() -> void:
 	if player_dead or attacking or dodging or blocking:
 		return
 	if kick_anim == "" or anim == null or not anim.has_animation(kick_anim):
 		return
-	attack_mult = 0.6
-	attack_kick = true
+	attack_kind = "kick"
 	_start_swing(kick_anim, ATTACK_SPEED)
 
 
-# Play a one-shot attack clip and schedule its hit at the impact point.
+# Force term: base = mass * accel, mass = STR, accel = DEX * ACCEL_PER_DEX.
+func _force_base() -> float:
+	return float(player_str) * (float(player_dex) * ACCEL_PER_DEX)
+
+
+# Melee damage for the current swing (light/heavy/kick) per the owner's formulas.
+func _attack_damage() -> int:
+	var base := _force_base()
+	var wdmg := float(GameState.weapon_data().get("damage", 0))
+	var dmg := base + wdmg
+	match attack_kind:
+		"heavy":
+			dmg = (base + wdmg) * (HEAVY_BASE_MULT + HEAVY_STR_STEP * floor(player_str / 10.0))
+		"kick":
+			dmg = base + float(player_boots_dmg)
+	return int(round(max(1.0, dmg)))
+
+
+# Play a one-shot attack clip and schedule its hit at the impact point. DEX
+# shortens the swing (faster attacks) by DEX_ANIM_PER_PT seconds per point.
 func _start_swing(clip: String, speed: float) -> void:
 	attacking = true
-	anim.play(clip, 0.1, speed)
+	var clip_len: float = anim.get_animation(clip).length
+	var swing: float = max(0.15, clip_len / speed - float(player_dex) * DEX_ANIM_PER_PT)
+	anim.play(clip, 0.1, clip_len / swing)
 	cur_anim = clip
-	var swing: float = anim.get_animation(clip).length / speed
 	attack_hit_t = max(0.05, swing * ATTACK_IMPACT)
 
 
@@ -748,19 +852,18 @@ func _apply_melee_hit() -> void:
 	var aim := -cam_yaw.global_transform.basis.z
 	aim.y = 0
 	aim = aim.normalized()
+	var dmg := _attack_damage()
 	var td := dummy_pos - player.global_position
 	td.y = 0
 	if td.length() < MELEE_RANGE + 0.5 and td.normalized().dot(aim) > 0.2:
-		_hit_dummy(int(round(randi_range(45, 65) * attack_mult)))
+		_hit_dummy(dmg)
 	if not boss_dead:
 		var tb := boss_root.global_position - player.global_position
 		tb.y = 0
 		if tb.length() < MELEE_RANGE + 2.2 and td_dot(tb, aim) > 0.0:
-			_hit_boss(int(round(randi_range(30, 45) * attack_mult)))
-			if attack_kick:
+			_hit_boss(dmg)
+			if attack_kind == "kick":
 				boss_root.global_position += tb.normalized() * KICK_KNOCKBACK * 0.2
-	attack_kick = false
-	attack_mult = 1.0
 
 
 func td_dot(v: Vector3, aim: Vector3) -> float:
@@ -772,7 +875,10 @@ func td_dot(v: Vector3, aim: Vector3) -> float:
 func _do_ranged() -> void:
 	if ranged_cd > 0.0 or player_dead:
 		return
-	ranged_cd = 0.18
+	ranged_cd = RANGED_CD
+	# Arrow physics: mass from STR (draw weight), launch speed from DEX.
+	var mass := AMMO_MASS + float(player_str) * MASS_PER_STR
+	var v0 := BOW_BASE_V + float(player_dex) * V_PER_DEX
 	var bolt := MeshInstance3D.new()
 	var sm := SphereMesh.new()
 	sm.radius = 0.12
@@ -785,8 +891,8 @@ func _do_ranged() -> void:
 	bolt.mesh = sm
 	bolt.position = player.global_position + Vector3(0, 1.2, 0)
 	add_child(bolt)
-	var aim := -cam.global_transform.basis.z
-	projectiles.append({"mesh": bolt, "vel": aim.normalized() * PROJ_SPEED, "life": 1.6})
+	var aim := -cam.global_transform.basis.z # includes pitch — elevate for distance
+	projectiles.append({"mesh": bolt, "vel": aim.normalized() * v0, "mass": mass, "dmg": int(GameState.weapon_data().get("damage", 0)), "life": 4.0})
 
 
 func _update_combat(delta: float) -> void:
@@ -804,14 +910,21 @@ func _update_combat(delta: float) -> void:
 	var bcenter := boss_root.global_position + Vector3(0, 2.0, 0) if boss_root else Vector3.ZERO
 	for i in range(projectiles.size() - 1, -1, -1):
 		var p = projectiles[i]
+		# Gravity (arc) + quadratic drag/mass (heavier arrows decelerate less).
+		p.vel.y -= gravity * delta
+		var spd: float = p.vel.length()
+		if spd > 0.01:
+			p.vel -= p.vel.normalized() * (ARROW_DRAG * spd * spd / p.mass) * delta
 		p.mesh.position += p.vel * delta
 		p.life -= delta
+		# Kinetic-energy damage at impact: 0.5*m*v^2 + bow damage (far = softer).
+		var ke_dmg := int(round(0.5 * p.mass * p.vel.length_squared() + p.dmg))
 		var done := false
 		if p.mesh.position.distance_to(dcenter) < 0.7:
-			_hit_dummy(randi_range(25, 38))
+			_hit_dummy(ke_dmg)
 			done = true
 		elif not boss_dead and p.mesh.position.distance_to(bcenter) < 2.2:
-			_hit_boss(randi_range(20, 32))
+			_hit_boss(ke_dmg)
 			done = true
 		if done or p.life <= 0.0 or p.mesh.position.y < 0.0:
 			p.mesh.queue_free()
@@ -858,8 +971,13 @@ func _banner(text: String) -> void:
 	tw.tween_property(hud_banner, "modulate:a", 0.0, 1.2)
 
 
+func _update_weapon_hud() -> void:
+	if hud_weapon:
+		hud_weapon.text = "⚔ %s   [Tab] / [1-6] switch" % String(GameState.weapon_data().get("name", "Sword"))
+
+
 func _update_hud() -> void:
 	if hud_player_fill:
-		hud_player_fill.size = Vector2(296.0 * (player_hp / PLAYER_MAX), 20)
+		hud_player_fill.size = Vector2(296.0 * (player_hp / player_max), 20)
 	if hud_boss_fill:
 		hud_boss_fill.size = Vector2(596.0 * (boss_hp / BOSS_MAX), 14)

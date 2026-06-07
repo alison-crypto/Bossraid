@@ -134,6 +134,42 @@ the specific page when you need exact API; the high-value areas for us:
 - **Networking (later LAN/co-op):** high-level multiplayer —
   `MultiplayerSpawner`, `MultiplayerSynchronizer`, `ENetMultiplayerPeer`.
 
+## Stats & damage (owner's formulas)
+
+Defined per character in `GameState.characters` (`str`/`dex`/`con`, `def` later
+from equipment) and applied in `Main.gd`:
+
+- **Force term** `base = mass · accel`, `mass = STR`, `accel = DEX · 0.01` →
+  `base = STR·DEX·0.01`.
+  - **Light** = `base + weapon_damage`
+  - **Heavy** = `(base + weapon_damage) · (1.5 + 0.01·floor(STR/10))`
+  - **Kick** = `base + boots_damage` (ignores weapon; uses boots/equipment)
+  - `weapon_damage` is a flat additive per weapon (`GameState.weapons[].damage`).
+- **DEX also speeds swings**: each point removes `DEX_ANIM_PER_PT` (0.01s) from a
+  swing (faster attacks + rate). Set via `_start_swing`.
+- **Ranged (bow)** = kinetic-energy projectile: arrow `mass = AMMO_MASS +
+  STR·MASS_PER_STR`, launch speed `v0 = BOW_BASE_V + DEX·V_PER_DEX`, then
+  per-frame **gravity** + **quadratic drag/mass** (heavier arrows fly farther).
+  Impact damage `= 0.5·mass·v² + bow_damage`; range emerges from v0 + mass.
+  (`_do_ranged` + projectile loop in `_update_combat`.)
+- **Max Health** `= CON · STR · HEALTH_K`.
+- **DEF** (equipment, 0 for now) **subtracts directly** from incoming damage,
+  after block/parry reduction.
+- Tuning lives in constants at the top of `Main.gd`; a `Bossraid stats: …` line
+  prints the resolved values on launch.
+
+## Weapons
+
+Data-driven in `GameState.weapons` (each: `light` combo of clip names, `heavy`
+clip, `ranged`, `dmg`/`speed` mults, placeholder `len`/`thick`/`color` mesh).
+`Main._equip_weapon()` rebuilds the held mesh + resets the combo; `_do_melee`/
+`_do_heavy` read the active weapon. Switch in-game with **Tab** (cycle) or
+**1–6**; HUD shows the name. Clips merged for weapons: Slash, SlashB, Heavy,
+Stab, Bow. Held meshes are placeholder boxes until real weapon models arrive.
+Still TODO (see chat): a clickable weapon/keybind menu (needs an InputMap-action
+refactor for remapping), per-weapon mesh offset/orientation, bow draw anim,
+crouch, and distinct axe/dagger/double-sword clips.
+
 ## Do / don't
 
 - Do keep it runnable after every change; commit small. Tabs, not spaces.
