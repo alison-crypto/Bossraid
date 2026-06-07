@@ -22,11 +22,11 @@ const MELEE_RANGE := 2.6
 # rig-dependent. Default: stand the blade up out of the fist.
 const WEAPON_EULER := Vector3(-90, 0, 0)
 const WEAPON_OFFSET := Vector3(0, 0.55, 0)
-# Melee pacing: the swing clip plays at ATTACK_SPEED (higher = snappier), you
-# can't swing again until it finishes (one hit per swing), and the hit lands
-# ATTACK_IMPACT of the way through — so damage is synced to the sword.
+# Melee pacing: the swing clip plays at ATTACK_SPEED (higher = snappier); you
+# can't start another basic attack until it finishes, and the hit lands when the
+# swing animation COMPLETES — so it's telegraphed (dodge/block in time) and a
+# swing cancelled before the end deals no damage.
 const ATTACK_SPEED := 1.4
-const ATTACK_IMPACT := 0.4
 # Dodge roll (Space): a quick burst in the move/facing direction with i-frames.
 const DODGE_SPEED := 11.0
 const DODGE_TIME := 0.45
@@ -153,8 +153,7 @@ var slam_target := Vector3.ZERO
 
 # Attacks
 var melee_cd := 0.0
-var attack_hit_t := -1.0 # >=0 while a swing is mid-flight, fires the hit at impact
-var locked_clip := ""    # the clip the current swing is locked on (released on its finish)
+var locked_clip := ""    # the clip the current swing is locked on (hit lands when it finishes)
 var anim_lock_t := 0.0   # safety timeout: force-release the swing lock if the finish never fires
 var ranged_cd := 0.0
 var projectiles: Array = []
@@ -486,9 +485,11 @@ func _boss_play(anim_name: String) -> void:
 
 
 func _on_anim_finished(finished_name) -> void:
-	# Release the swing lock when the clip it locked on finishes (robust to any
-	# clip name, vs. a hardcoded list that could deadlock on an unlisted clip).
+	# The hit lands exactly when the swing animation completes — so it's
+	# telegraphed (dodge/block have the whole swing to react) and a swing
+	# cancelled before the end (locked_clip cleared) never lands.
 	if locked_clip != "" and String(finished_name) == locked_clip:
+		_apply_melee_hit()
 		attacking = false
 		locked_clip = ""
 		anim_lock_t = 0.0
@@ -1005,22 +1006,19 @@ func _start_swing(clip: String, speed: float) -> void:
 	locked_clip = clip
 	var clip_len: float = anim.get_animation(clip).length
 	var swing: float = _swing_time(clip, speed)
-	# The crossfade out of idle must finish BEFORE the impact, or a fast (high-DEX)
-	# swing lands its hit while the swing is still blending in — looking like the
-	# hit precedes the animation. Keep the blend well under the pre-impact window
-	# (impact is at swing*ATTACK_IMPACT), and scale it with the swing length.
-	var blend: float = min(0.08, swing * ATTACK_IMPACT * 0.5)
+	# Short crossfade in from idle, scaled so a fast swing isn't swallowed by it.
+	var blend: float = min(0.1, swing * 0.3)
 	anim.play(clip, blend, clip_len / swing)
 	cur_anim = clip
-	attack_hit_t = max(0.05, swing * ATTACK_IMPACT)
-	anim_lock_t = swing + 0.15 # safety: release even if animation_finished never fires
+	# The hit resolves when the clip finishes (_on_anim_finished); this is the
+	# safety net that lands it / releases the lock if that signal is ever missed.
+	anim_lock_t = swing + 0.15
 
 
-# Cancel the current swing (dodge/kick/block/bow). Active-frames rule: a hit that
-# already landed (impact passed) stands; a pre-impact swing whiffs (drop the hit).
+# Cancel the current swing (dodge/kick/block/bow). Since the hit only resolves
+# when the swing animation finishes, clearing locked_clip here means the cancelled
+# swing simply never lands — no damage.
 func _cancel_swing() -> void:
-	if attack_hit_t > 0.0:
-		attack_hit_t = -1.0 # pre-impact: no damage
 	attacking = false
 	locked_clip = ""
 	anim_lock_t = 0.0
@@ -1110,17 +1108,13 @@ func _update_combat(delta: float) -> void:
 	melee_cd = max(0.0, melee_cd - delta)
 	ranged_cd = max(0.0, ranged_cd - delta)
 
-	# Land the melee hit at the swing's impact point (synced to the animation).
-	if attack_hit_t >= 0.0:
-		attack_hit_t -= delta
-		if attack_hit_t <= 0.0:
-			attack_hit_t = -1.0
-			_apply_melee_hit()
-
-	# Safety: force-release the swing lock if animation_finished never arrives.
+	# The hit resolves on _on_anim_finished (swing complete). Safety net: if that
+	# signal is ever missed, land the hit and release once the swing's full
+	# duration has elapsed. (A cancelled swing zeroes anim_lock_t, so it's skipped.)
 	if attacking and anim_lock_t > 0.0:
 		anim_lock_t -= delta
 		if anim_lock_t <= 0.0:
+			_apply_melee_hit()
 			attacking = false
 			locked_clip = ""
 			cur_anim = ""

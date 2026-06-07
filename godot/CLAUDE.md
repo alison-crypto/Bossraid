@@ -210,14 +210,17 @@ every change; it calls Main's preview helpers so shown numbers == combat numbers
 Progression lives in `GameState` (survives respawn/scene change): `level`,
 `skill_points`, owned gear, consumables, `roll_loot()`, `grant_boss_reward()`.
 
-## Combat: attack cancelling (active-frames)
+## Combat: attack cancelling (hit on swing completion)
 
-A swing fires its hit once at its impact frame (`attack_hit_t` → `_apply_melee_hit`).
-A new **basic attack** (light, heavy) waits for the current swing (`attacking`
-gate). **Dodge / kick / block / bow** can **cancel** a swing via `_cancel_swing()`:
-if cancelled before impact the hit is dropped (whiff); after impact it already
-landed. The swing lock is keyed to `locked_clip` (released on its
-`animation_finished`) with an `anim_lock_t` safety timeout so it can never deadlock.
+A swing's hit lands **when its animation completes** (`_on_anim_finished` →
+`_apply_melee_hit`), not partway through — so attacks are telegraphed and there's
+the whole swing to react. A new **basic attack** (light, heavy) waits for the
+current swing (`attacking` gate). **Dodge / kick / block / bow** can **cancel** a
+swing via `_cancel_swing()`; because the hit only resolves on completion, a swing
+cancelled before the end simply **never lands** (no damage). The swing lock is
+keyed to `locked_clip` (resolved on its `animation_finished`) with an
+`anim_lock_t` safety net that lands the hit / releases the lock if that signal is
+ever missed, so it can never deadlock.
 
 ## Do / don't
 
