@@ -1,0 +1,20 @@
+; Bossraid — Godot 4 project.
+; Engine configuration. Open this folder in Godot 4.3+ ("Import" the project).
+
+config_version=5
+
+[application]
+
+config/name="Bossraid"
+run/main_scene="res://Main.tscn"
+config/features=PackedStringArray("4.3", "Forward Plus")
+config/icon="res://icon.svg"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+
+[rendering]
+
+environment/defaults/default_clear_color=Color(0.62, 0.71, 0.85, 1)
