@@ -8,7 +8,7 @@ extends Node
 var characters := [
 	{"name": "Soldier", "file": "res://models/Soldier.glb", "flip": true},
 	{"name": "Vanguard", "file": "res://models/Vanguard.glb", "flip": false},
-	{"name": "Maria", "file": "res://models/Maria.glb", "flip": false},
+	{"name": "Maria", "file": "res://models/Maria.glb", "flip": false, "weapon": false},
 	{"name": "Erika Archer", "file": "res://models/Erika.glb", "flip": false},
 ]
 var selected := 0
