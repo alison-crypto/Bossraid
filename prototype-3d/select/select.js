@@ -41,6 +41,29 @@ const loader = new GLTFLoader();
 let mixer = null;
 let current = null;
 
+// Skeleton-based size measurement (mesh boxes are unreliable for rigged models).
+const _bp = new THREE.Vector3();
+function modelBounds(model) {
+  model.updateWorldMatrix(true, true);
+  const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+  const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+  let bones = 0;
+  model.traverse((o) => {
+    if (o.isBone) {
+      o.getWorldPosition(_bp);
+      min.min(_bp);
+      max.max(_bp);
+      bones++;
+    }
+  });
+  if (bones < 3 || !Number.isFinite(min.y)) {
+    const box = new THREE.Box3().setFromObject(model);
+    if (box.isEmpty() || !Number.isFinite(box.min.y)) return null;
+    return { height: box.max.y - box.min.y, minY: box.min.y, cx: (box.min.x + box.max.x) / 2, cz: (box.min.z + box.max.z) / 2 };
+  }
+  return { height: max.y - min.y, minY: min.y, cx: (min.x + max.x) / 2, cz: (min.z + max.z) / 2 };
+}
+
 function loadPreview(file) {
   if (current) {
     turntable.remove(current);
@@ -53,20 +76,15 @@ function loadPreview(file) {
       if (o.isMesh) o.castShadow = true;
     });
     turntable.add(model);
-    // Normalize to ~1.8 tall and stand centered on the disc. Update matrices
-    // first so models with nested transforms (Sketchfab/FBX exports) measure right.
-    model.updateWorldMatrix(true, true);
-    let box = new THREE.Box3().setFromObject(model);
-    const h = box.max.y - box.min.y;
-    if (Number.isFinite(h) && h > 0.01) model.scale.multiplyScalar(1.8 / h);
-    model.updateWorldMatrix(true, true);
-    box = new THREE.Box3().setFromObject(model);
-    if (!box.isEmpty() && Number.isFinite(box.min.y)) {
-      const c = new THREE.Vector3();
-      box.getCenter(c);
-      model.position.x -= c.x;
-      model.position.z -= c.z;
-      model.position.y -= box.min.y;
+    // Normalize to a consistent height using the SKELETON (mesh boxes are
+    // unreliable for rigged characters), then stand centered on the disc.
+    let b = modelBounds(model);
+    if (b && b.height > 0.01) model.scale.multiplyScalar(1.7 / b.height);
+    b = modelBounds(model);
+    if (b) {
+      model.position.x -= b.cx;
+      model.position.z -= b.cz;
+      model.position.y -= b.minY;
     }
     current = model;
     const idle = gltf.animations.find((a) => /idle/i.test(a.name)) || gltf.animations[0];
