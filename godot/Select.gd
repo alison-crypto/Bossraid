@@ -59,7 +59,7 @@ func _ready() -> void:
 	vb.add_child(start)
 
 	var hint := Label.new()
-	hint.text = "WASD move · mouse look · L-click melee · R-click ranged"
+	hint.text = "WASD · L-click light · R-click heavy · Space dodge · Q block · F kick · hold MMB aim"
 	hint.modulate = Color(1, 1, 1, 0.6)
 	hint.position = Vector2(60, 660)
 	add_child(hint)

@@ -31,6 +31,14 @@ const ATTACK_IMPACT := 0.4
 const DODGE_SPEED := 11.0
 const DODGE_TIME := 0.45
 const DODGE_IFRAMES := 0.5
+# Heavy attack (right-click): slower, hits harder. Block (hold Q): cuts incoming
+# damage; a hit in the first PARRY_WINDOW of a block is fully parried. Kick (F):
+# quick poke + knockback. Aim (hold middle-mouse): pulls the camera in to shoot.
+const HEAVY_SPEED := 1.0
+const HEAVY_MULT := 2.2
+const BLOCK_REDUCTION := 0.2 # fraction of damage still taken while blocking
+const PARRY_WINDOW := 0.3
+const KICK_KNOCKBACK := 6.0
 
 const PLAYER_MAX := 100.0
 const BOSS_MAX := 400.0
@@ -50,12 +58,21 @@ var idle_anim := ""
 var run_anim := ""
 var attack_anim := ""   # first combo swing (outward slash)
 var attack_anim2 := ""  # second combo swing (inward slash)
+var heavy_anim := ""
+var kick_anim := ""
+var block_anim := ""
 var dodge_anim := ""
 var combo_i := 0
 var attacking := false
+var attack_mult := 1.0  # damage scale for the in-flight swing (heavy vs light)
+var attack_kick := false # current swing is a kick (applies knockback)
 var dodging := false
 var dodge_t := 0.0
 var dodge_dir := Vector3.FORWARD
+var blocking := false
+var block_t := 0.0      # seconds the current block has been held (for parry window)
+var aiming := false
+var cam_rest := Vector3.ZERO
 var face_flip := true
 var skel: Skeleton3D
 var weapon: MeshInstance3D
@@ -265,6 +282,7 @@ func _build_player(pos: Vector3) -> void:
 	cam_yaw.add_child(cam_pitch)
 	cam = Camera3D.new()
 	cam.position = Vector3(0.5, 0, 4.5)
+	cam_rest = cam.position
 	cam_pitch.add_child(cam)
 
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
@@ -333,6 +351,9 @@ func _setup_animation() -> void:
 		var m_run := AnimUtil.merge(anim, skel, "res://models/anim/run.glb", "RunSword")
 		var m_slash := AnimUtil.merge(anim, skel, "res://models/anim/slash.glb", "Slash")
 		var m_slash2 := AnimUtil.merge(anim, skel, "res://models/anim/inslash.glb", "SlashB")
+		heavy_anim = AnimUtil.merge(anim, skel, "res://models/anim/smash.glb", "Heavy")
+		kick_anim = AnimUtil.merge(anim, skel, "res://models/anim/kick.glb", "Kick")
+		block_anim = AnimUtil.merge(anim, skel, "res://models/anim/block.glb", "Block")
 		dodge_anim = AnimUtil.merge(anim, skel, "res://models/anim/dodge.glb", "Dodge")
 		if idle_anim == "" and m_idle != "":
 			idle_anim = m_idle
@@ -352,6 +373,9 @@ func _setup_animation() -> void:
 	_set_loop(run_anim, true)
 	_set_loop(attack_anim, false) # one-shot
 	_set_loop(attack_anim2, false)
+	_set_loop(heavy_anim, false)
+	_set_loop(kick_anim, false)
+	_set_loop(block_anim, true) # held
 	_set_loop(dodge_anim, false)
 	anim.animation_finished.connect(_on_anim_finished)
 	if idle_anim != "":
@@ -379,7 +403,7 @@ func _boss_play(anim_name: String) -> void:
 
 func _on_anim_finished(finished_name) -> void:
 	var n := String(finished_name)
-	if n == attack_anim or n == attack_anim2:
+	if n == attack_anim or n == attack_anim2 or n == heavy_anim or n == kick_anim:
 		attacking = false
 		cur_anim = "" # let _physics_process resume idle/run
 
@@ -437,11 +461,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 		elif event.button_index == MOUSE_BUTTON_LEFT:
-			_do_melee()
+			if aiming:
+				_do_ranged() # while aiming, left-click shoots
+			else:
+				_do_melee()
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
-			_do_ranged()
+			_do_heavy()
 	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_SPACE:
 		_do_dodge()
+	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F:
+		_do_kick()
 	elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
@@ -474,7 +503,21 @@ func _physics_process(delta: float) -> void:
 			dir -= rgt
 	dir = dir.normalized()
 
+	# Aim (hold middle-mouse): pull the camera in over the shoulder to shoot.
+	aiming = Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE) and not dodging and not player_dead
+	cam.position = cam.position.lerp(Vector3(0.6, 0.05, 2.3) if aiming else cam_rest, 0.2)
+
+	# Block (hold Q): can't block mid-swing/dodge/aim. block_t feeds the parry window.
+	var want_block := Input.is_physical_key_pressed(KEY_Q) and not attacking and not dodging and not aiming and not player_dead
+	if want_block and not blocking:
+		block_t = 0.0
+	blocking = want_block
+	if blocking:
+		block_t += delta
+
 	var speed := SPRINT if Input.is_physical_key_pressed(KEY_SHIFT) else WALK
+	if blocking:
+		speed *= 0.4
 	if dodging:
 		dodge_t -= delta
 		player.velocity.x = dodge_dir.x * DODGE_SPEED
@@ -496,9 +539,13 @@ func _physics_process(delta: float) -> void:
 		var target := atan2(face_dir.x, face_dir.z) + (PI if face_flip else 0.0)
 		model_facing = lerp_angle(model_facing, target, 0.2)
 		model.rotation.y = model_facing
-	# Locomotion animation (suppressed while attacking or dodging).
+	# Animation state: swings/dodge play their own one-shots; otherwise block
+	# pose (if holding block) or idle/run locomotion.
 	if not attacking and not dodging:
-		_play(run_anim if dir.length() > 0.1 else idle_anim)
+		if blocking and block_anim != "":
+			_play(block_anim)
+		else:
+			_play(run_anim if dir.length() > 0.1 else idle_anim)
 
 	# Size the held weapon to ~world scale (the hand bone may be heavily scaled).
 	if weapon_attach and not weapon_scaled:
@@ -569,6 +616,13 @@ func _update_boss(delta: float) -> void:
 func _damage_player(dmg: int) -> void:
 	if player_invuln > 0.0 or player_dead:
 		return
+	if blocking:
+		if block_t <= PARRY_WINDOW:
+			# Parry: a hit caught just as you raise guard — fully negated, boss reels.
+			boss_flash = 0.25
+			player_invuln = 0.4
+			return
+		dmg = int(round(dmg * BLOCK_REDUCTION)) # blocked: chip damage only
 	player_hp = max(0.0, player_hp - dmg)
 	player_invuln = 0.7
 	if player_hp <= 0.0:
@@ -612,21 +666,50 @@ func _boss_die() -> void:
 # --- Player attacks ---------------------------------------------------------
 func _do_melee() -> void:
 	# One swing at a time: can't re-attack until the current swing finishes.
-	if player_dead or attacking or dodging or melee_cd > 0.0:
+	if player_dead or attacking or dodging or blocking or melee_cd > 0.0:
 		return
 	# Alternate outward/inward slash so repeated clicks read as a combo.
 	var clip := attack_anim if combo_i % 2 == 0 else attack_anim2
 	combo_i += 1
+	attack_mult = 1.0
+	attack_kick = false
 	if clip != "" and anim and anim.has_animation(clip):
-		attacking = true
-		anim.play(clip, 0.1, ATTACK_SPEED)
-		cur_anim = clip
-		var swing: float = anim.get_animation(clip).length / ATTACK_SPEED
-		attack_hit_t = max(0.05, swing * ATTACK_IMPACT) # land the hit at impact
+		_start_swing(clip, ATTACK_SPEED)
 	else:
 		# No swing clip: fall back to an instant hit on a fixed cooldown.
 		melee_cd = 0.45
 		_apply_melee_hit()
+
+
+# Right-click: a slower, harder overhead.
+func _do_heavy() -> void:
+	if player_dead or attacking or dodging or blocking or aiming:
+		return
+	if heavy_anim == "" or anim == null or not anim.has_animation(heavy_anim):
+		return
+	attack_mult = HEAVY_MULT
+	attack_kick = false
+	_start_swing(heavy_anim, HEAVY_SPEED)
+
+
+# F: a quick kick that pokes for light damage and knocks the boss back.
+func _do_kick() -> void:
+	if player_dead or attacking or dodging or blocking:
+		return
+	if kick_anim == "" or anim == null or not anim.has_animation(kick_anim):
+		return
+	attack_mult = 0.6
+	attack_kick = true
+	_start_swing(kick_anim, ATTACK_SPEED)
+
+
+# Play a one-shot attack clip and schedule its hit at the impact point.
+func _start_swing(clip: String, speed: float) -> void:
+	attacking = true
+	anim.play(clip, 0.1, speed)
+	cur_anim = clip
+	var swing: float = anim.get_animation(clip).length / speed
+	attack_hit_t = max(0.05, swing * ATTACK_IMPACT)
 
 
 # Quick evade (Space): dash in the move direction (or facing if idle) with a
@@ -668,12 +751,16 @@ func _apply_melee_hit() -> void:
 	var td := dummy_pos - player.global_position
 	td.y = 0
 	if td.length() < MELEE_RANGE + 0.5 and td.normalized().dot(aim) > 0.2:
-		_hit_dummy(randi_range(45, 65))
+		_hit_dummy(int(round(randi_range(45, 65) * attack_mult)))
 	if not boss_dead:
 		var tb := boss_root.global_position - player.global_position
 		tb.y = 0
 		if tb.length() < MELEE_RANGE + 2.2 and td_dot(tb, aim) > 0.0:
-			_hit_boss(randi_range(30, 45))
+			_hit_boss(int(round(randi_range(30, 45) * attack_mult)))
+			if attack_kick:
+				boss_root.global_position += tb.normalized() * KICK_KNOCKBACK * 0.2
+	attack_kick = false
+	attack_mult = 1.0
 
 
 func td_dot(v: Vector3, aim: Vector3) -> float:
