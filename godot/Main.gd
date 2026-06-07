@@ -17,6 +17,11 @@ const CHARACTER := "res://models/Soldier.glb"
 const MODEL_FACE_FLIP := true # set false if the character faces backward
 const MELEE_RANGE := 2.6
 const PROJ_SPEED := 24.0
+# Held-sword placement relative to the right-hand bone. If the blade points the
+# wrong way, tune these two (EULER is degrees) — the correct values are
+# rig-dependent. Default: stand the blade up out of the fist.
+const WEAPON_EULER := Vector3(-90, 0, 0)
+const WEAPON_OFFSET := Vector3(0, 0.55, 0)
 
 const PLAYER_MAX := 100.0
 const BOSS_MAX := 400.0
@@ -41,6 +46,7 @@ var skel: Skeleton3D
 var weapon: MeshInstance3D
 var weapon_attach: BoneAttachment3D
 var weapon_scaled := false
+var has_weapon := true # false for characters with a built-in weapon (e.g. Maria)
 var model_facing := 0.0
 
 var player_hp := PLAYER_MAX
@@ -217,6 +223,7 @@ func _build_player(pos: Vector3) -> void:
 
 	var entry: Dictionary = GameState.current() # autoload; defaults to first character
 	face_flip = entry.get("flip", true)
+	has_weapon = entry.get("weapon", true)
 	var scene := load(entry.get("file", CHARACTER))
 	if scene:
 		model = scene.instantiate()
@@ -362,6 +369,8 @@ func _match_anim(list, keys) -> String:
 
 
 func _attach_weapon() -> void:
+	if not has_weapon:
+		return # character already carries its own weapon mesh
 	if skel == null:
 		skel = AnimUtil.find_skeleton(model)
 	if skel == null:
@@ -388,6 +397,7 @@ func _attach_weapon() -> void:
 	bm.metallic = 0.6
 	blade.material = bm
 	weapon.mesh = blade
+	weapon.rotation_degrees = WEAPON_EULER
 	weapon_attach.add_child(weapon)
 
 
@@ -463,7 +473,7 @@ func _physics_process(delta: float) -> void:
 		var s: float = weapon_attach.global_transform.basis.get_scale().x
 		if s > 0.0001:
 			weapon.scale = Vector3.ONE / s
-			weapon.position = Vector3(0, 0, 0.55) / s
+			weapon.position = WEAPON_OFFSET / s
 			weapon_scaled = true
 
 	_update_boss(delta)
