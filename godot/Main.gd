@@ -1,10 +1,11 @@
-# Bossraid — Godot starter scene (built in code so the .tscn stays trivial).
+# Bossraid — Godot Floor-1 test scene (built in code so the .tscn stays trivial).
 #
-# Open arena + third-person player (animated glTF) + a training dummy you can
-# hit with melee (left click) and ranged (right click). See CLAUDE.md.
+# Open arena, third-person animated player, a training dummy, and a Floor-1 boss
+# (Stone Golem) that chases and does telegraphed ground slams. Player + boss have
+# HP and a HUD. See CLAUDE.md for the roadmap.
 #
-# Controls: WASD move, mouse look (click to capture / Esc to release),
-# Shift sprint, Space jump, Left-click melee, Right-click ranged.
+# Controls: WASD move, mouse look (click to capture / Esc release), Shift sprint,
+# Space jump, Left-click melee, Right-click ranged.
 
 extends Node3D
 
@@ -16,6 +17,10 @@ const CHARACTER := "res://models/Soldier.glb"
 const MODEL_FACE_FLIP := true # set false if the character faces backward
 const MELEE_RANGE := 2.6
 const PROJ_SPEED := 24.0
+
+const PLAYER_MAX := 100.0
+const BOSS_MAX := 400.0
+const SLAM_RADIUS := 3.6
 
 var player: CharacterBody3D
 var model: Node3D
@@ -29,25 +34,50 @@ var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9
 var cur_anim := ""
 var model_facing := 0.0
 
+var player_hp := PLAYER_MAX
+var player_invuln := 0.0
+var player_dead := false
+var player_spawn := Vector3(0, 0, 6)
+
 # Dummy
-var dummy_pos := Vector3(0, 0, -5)
+var dummy_pos := Vector3(6, 0, -2)
 const DUMMY_MAX := 600.0
 var dummy_hp := DUMMY_MAX
-var dummy_mesh: MeshInstance3D
 var dummy_mat: StandardMaterial3D
 var dummy_flash := 0.0
+
+# Boss
+var boss_root: Node3D
+var boss_mat: StandardMaterial3D
+var boss_pos := Vector3(0, 0, -18)
+var boss_hp := BOSS_MAX
+var boss_state := "idle" # idle | windup | recover
+var boss_t := 0.0
+var boss_cd := 3.0
+var boss_flash := 0.0
+var boss_dead := false
+var slam_ring: MeshInstance3D
+var slam_mat: StandardMaterial3D
+var slam_target := Vector3.ZERO
 
 # Attacks
 var melee_cd := 0.0
 var ranged_cd := 0.0
-var projectiles: Array = [] # [{mesh, vel, life}]
+var projectiles: Array = []
+
+# HUD
+var hud_player_fill: ColorRect
+var hud_boss_fill: ColorRect
+var hud_banner: Label
 
 
 func _ready() -> void:
 	_build_environment()
 	_build_ground()
 	_build_dummy(dummy_pos)
-	_build_player(Vector3(0, 0, 3))
+	_build_boss(boss_pos)
+	_build_player(player_spawn)
+	_build_hud()
 
 
 func _build_environment() -> void:
@@ -80,25 +110,72 @@ func _build_ground() -> void:
 	mesh.mesh = plane
 	body.add_child(mesh)
 	var col := CollisionShape3D.new()
-	col.shape = WorldBoundaryShape3D.new() # infinite floor at y=0
+	col.shape = WorldBoundaryShape3D.new()
 	body.add_child(col)
 	add_child(body)
 
 
 func _build_dummy(pos: Vector3) -> void:
 	var d := Node3D.new()
-	dummy_mesh = MeshInstance3D.new()
+	var dm := MeshInstance3D.new()
 	var caps := CapsuleMesh.new()
 	caps.radius = 0.42
 	caps.height = 1.9
 	dummy_mat = StandardMaterial3D.new()
 	dummy_mat.albedo_color = Color(0.81, 0.7, 0.48)
 	caps.material = dummy_mat
-	dummy_mesh.mesh = caps
-	dummy_mesh.position = Vector3(0, 1.0, 0)
-	d.add_child(dummy_mesh)
+	dm.mesh = caps
+	dm.position = Vector3(0, 1.0, 0)
+	d.add_child(dm)
 	d.position = pos
 	add_child(d)
+
+
+func _build_boss(pos: Vector3) -> void:
+	boss_root = Node3D.new()
+	var body := MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = 1.5
+	cyl.bottom_radius = 2.0
+	cyl.height = 4.0
+	cyl.radial_segments = 6
+	boss_mat = StandardMaterial3D.new()
+	boss_mat.albedo_color = Color(0.54, 0.42, 0.33)
+	cyl.material = boss_mat
+	body.mesh = cyl
+	body.position = Vector3(0, 2.0, 0)
+	boss_root.add_child(body)
+	var core := MeshInstance3D.new()
+	var sph := SphereMesh.new()
+	sph.radius = 0.7
+	sph.height = 1.4
+	var cm := StandardMaterial3D.new()
+	cm.albedo_color = Color(1, 0.5, 0.2)
+	cm.emission_enabled = true
+	cm.emission = Color(1, 0.4, 0.1)
+	cm.emission_energy_multiplier = 2.0
+	sph.material = cm
+	core.mesh = sph
+	core.position = Vector3(0, 2.4, 0)
+	boss_root.add_child(core)
+	boss_root.position = pos
+	add_child(boss_root)
+
+	slam_ring = MeshInstance3D.new()
+	var ring := CylinderMesh.new()
+	ring.top_radius = SLAM_RADIUS
+	ring.bottom_radius = SLAM_RADIUS
+	ring.height = 0.08
+	ring.radial_segments = 32
+	slam_mat = StandardMaterial3D.new()
+	slam_mat.albedo_color = Color(1, 0.2, 0.15, 0.4)
+	slam_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	slam_mat.emission_enabled = true
+	slam_mat.emission = Color(1, 0.2, 0.1)
+	ring.material = slam_mat
+	slam_ring.mesh = ring
+	slam_ring.visible = false
+	add_child(slam_ring)
 
 
 func _build_player(pos: Vector3) -> void:
@@ -130,17 +207,55 @@ func _build_player(pos: Vector3) -> void:
 		fb.position = Vector3(0, 0.85, 0)
 		player.add_child(fb)
 
-	# Manual camera rig: yaw pivot -> pitch pivot -> camera placed BEHIND (+Z).
 	cam_yaw = Node3D.new()
 	cam_yaw.position = Vector3(0, 1.55, 0)
 	player.add_child(cam_yaw)
 	cam_pitch = Node3D.new()
 	cam_yaw.add_child(cam_pitch)
 	cam = Camera3D.new()
-	cam.position = Vector3(0.5, 0, 4.5) # behind + slight shoulder
+	cam.position = Vector3(0.5, 0, 4.5)
 	cam_pitch.add_child(cam)
 
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+
+func _build_hud() -> void:
+	var layer := CanvasLayer.new()
+	add_child(layer)
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(root)
+
+	# Player HP (top-left).
+	root.add_child(_rect(Color(0, 0, 0, 0.5), Vector2(24, 24), Vector2(300, 24)))
+	hud_player_fill = _rect(Color(0.36, 0.85, 0.42), Vector2(26, 26), Vector2(296, 20))
+	root.add_child(hud_player_fill)
+
+	# Boss bar (top-center, 1280-wide design).
+	var name_label := Label.new()
+	name_label.text = "STONE GOLEM"
+	name_label.position = Vector2(340, 18)
+	name_label.add_theme_font_size_override("font_size", 18)
+	root.add_child(name_label)
+	root.add_child(_rect(Color(0, 0, 0, 0.55), Vector2(340, 42), Vector2(600, 18)))
+	hud_boss_fill = _rect(Color(0.91, 0.33, 0.31), Vector2(342, 44), Vector2(596, 14))
+	root.add_child(hud_boss_fill)
+
+	hud_banner = Label.new()
+	hud_banner.set_anchors_preset(Control.PRESET_CENTER)
+	hud_banner.add_theme_font_size_override("font_size", 48)
+	hud_banner.modulate = Color(1, 1, 1, 0)
+	root.add_child(hud_banner)
+
+
+func _rect(c: Color, pos: Vector2, sz: Vector2) -> ColorRect:
+	var r := ColorRect.new()
+	r.color = c
+	r.position = pos
+	r.size = sz
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return r
 
 
 func _play(anim_name: String) -> void:
@@ -169,8 +284,8 @@ func _physics_process(delta: float) -> void:
 		return
 	cam_yaw.rotation.y = yaw
 	cam_pitch.rotation.x = pitch
+	player_invuln = max(0.0, player_invuln - delta)
 
-	# Camera-relative movement (layout-independent physical keys).
 	var fwd := -cam_yaw.global_transform.basis.z
 	var rgt := cam_yaw.global_transform.basis.x
 	fwd.y = 0
@@ -178,14 +293,15 @@ func _physics_process(delta: float) -> void:
 	fwd = fwd.normalized()
 	rgt = rgt.normalized()
 	var dir := Vector3.ZERO
-	if Input.is_physical_key_pressed(KEY_W):
-		dir += fwd
-	if Input.is_physical_key_pressed(KEY_S):
-		dir -= fwd
-	if Input.is_physical_key_pressed(KEY_D):
-		dir += rgt
-	if Input.is_physical_key_pressed(KEY_A):
-		dir -= rgt
+	if not player_dead:
+		if Input.is_physical_key_pressed(KEY_W):
+			dir += fwd
+		if Input.is_physical_key_pressed(KEY_S):
+			dir -= fwd
+		if Input.is_physical_key_pressed(KEY_D):
+			dir += rgt
+		if Input.is_physical_key_pressed(KEY_A):
+			dir -= rgt
 	dir = dir.normalized()
 
 	var speed := SPRINT if Input.is_physical_key_pressed(KEY_SHIFT) else WALK
@@ -193,11 +309,10 @@ func _physics_process(delta: float) -> void:
 	player.velocity.z = dir.z * speed
 	if not player.is_on_floor():
 		player.velocity.y -= gravity * delta
-	elif Input.is_physical_key_pressed(KEY_SPACE):
+	elif Input.is_physical_key_pressed(KEY_SPACE) and not player_dead:
 		player.velocity.y = JUMP
 	player.move_and_slide()
 
-	# Face + animate.
 	if dir.length() > 0.1:
 		if model:
 			var target := atan2(dir.x, dir.z) + (PI if MODEL_FACE_FLIP else 0.0)
@@ -207,26 +322,132 @@ func _physics_process(delta: float) -> void:
 	else:
 		_play("Idle")
 
+	_update_boss(delta)
 	_update_combat(delta)
+	_update_hud()
 
 
-# --- Combat -----------------------------------------------------------------
+# --- Boss -------------------------------------------------------------------
+func _update_boss(delta: float) -> void:
+	if boss_dead or not boss_root:
+		return
+	var to := player.global_position - boss_root.global_position
+	to.y = 0
+	var dist := to.length()
+	if dist > 0.2:
+		boss_root.rotation.y = atan2(to.x, to.z)
+
+	if boss_flash > 0.0:
+		boss_flash = max(0.0, boss_flash - delta)
+		boss_mat.emission_enabled = true
+		boss_mat.emission = Color(0.6, 0.5, 0.4)
+	else:
+		boss_mat.emission_enabled = false
+
+	match boss_state:
+		"idle":
+			if dist > 4.0:
+				boss_root.global_position += to.normalized() * 2.2 * delta
+			boss_cd -= delta
+			if boss_cd <= 0.0 and dist < 16.0:
+				boss_state = "windup"
+				boss_t = 1.1
+				slam_target = player.global_position
+				slam_target.y = 0.05
+				slam_ring.global_position = slam_target
+				slam_ring.visible = true
+		"windup":
+			boss_t -= delta
+			var k: float = clamp(1.0 - boss_t / 1.1, 0.0, 1.0)
+			slam_mat.albedo_color = Color(1, 0.2, 0.15, 0.25 + k * 0.45)
+			if boss_t <= 0.0:
+				boss_state = "recover"
+				boss_t = 0.6
+				slam_mat.albedo_color = Color(1, 0.55, 0.2, 0.85)
+				var pd := player.global_position - slam_target
+				pd.y = 0
+				if pd.length() < SLAM_RADIUS + 0.4:
+					_damage_player(22)
+		"recover":
+			boss_t -= delta
+			if boss_t <= 0.0:
+				boss_state = "idle"
+				boss_cd = 2.4
+				slam_ring.visible = false
+
+
+func _damage_player(dmg: int) -> void:
+	if player_invuln > 0.0 or player_dead:
+		return
+	player_hp = max(0.0, player_hp - dmg)
+	player_invuln = 0.7
+	if player_hp <= 0.0:
+		_player_die()
+
+
+func _player_die() -> void:
+	player_dead = true
+	_banner("DEFEATED")
+	await get_tree().create_timer(1.6).timeout
+	player.global_position = player_spawn
+	player.velocity = Vector3.ZERO
+	player_hp = PLAYER_MAX
+	player_dead = false
+
+
+func _hit_boss(dmg: int) -> void:
+	if boss_dead:
+		return
+	boss_hp = max(0.0, boss_hp - dmg)
+	boss_flash = 0.12
+	_spawn_damage(boss_root.global_position + Vector3(0, 4.6, 0), dmg)
+	if boss_hp <= 0.0:
+		_boss_die()
+
+
+func _boss_die() -> void:
+	boss_dead = true
+	boss_root.visible = false
+	slam_ring.visible = false
+	_banner("VICTORY!")
+	await get_tree().create_timer(2.5).timeout
+	boss_hp = BOSS_MAX
+	boss_dead = false
+	boss_state = "idle"
+	boss_cd = 3.0
+	boss_root.global_position = boss_pos
+	boss_root.visible = true
+
+
+# --- Player attacks ---------------------------------------------------------
 func _do_melee() -> void:
-	if melee_cd > 0.0:
+	if melee_cd > 0.0 or player_dead:
 		return
 	melee_cd = 0.45
-	var to := dummy_pos - player.global_position
-	to.y = 0
-	var d := to.length()
-	if d < MELEE_RANGE + 0.5:
-		var aim := -cam_yaw.global_transform.basis.z
-		aim.y = 0
-		if to.normalized().dot(aim.normalized()) > 0.2:
-			_hit_dummy(randi_range(45, 65))
+	var aim := -cam_yaw.global_transform.basis.z
+	aim.y = 0
+	aim = aim.normalized()
+	# Dummy
+	var td := dummy_pos - player.global_position
+	td.y = 0
+	if td.length() < MELEE_RANGE + 0.5 and td.normalized().dot(aim) > 0.2:
+		_hit_dummy(randi_range(45, 65))
+	# Boss (bigger reach because it's large)
+	if not boss_dead:
+		var tb := boss_root.global_position - player.global_position
+		tb.y = 0
+		if tb.length() < MELEE_RANGE + 2.2 and td_dot(tb, aim) > 0.0:
+			_hit_boss(randi_range(30, 45))
+
+
+func td_dot(v: Vector3, aim: Vector3) -> float:
+	if v.length() < 0.001:
+		return 1.0
+	return v.normalized().dot(aim)
 
 
 func _do_ranged() -> void:
-	if ranged_cd > 0.0:
+	if ranged_cd > 0.0 or player_dead:
 		return
 	ranged_cd = 0.18
 	var bolt := MeshInstance3D.new()
@@ -239,11 +460,10 @@ func _do_ranged() -> void:
 	bm.emission = Color(0.6, 0.9, 1.0)
 	sm.material = bm
 	bolt.mesh = sm
-	var from := player.global_position + Vector3(0, 1.2, 0)
-	bolt.position = from
+	bolt.position = player.global_position + Vector3(0, 1.2, 0)
 	add_child(bolt)
-	var aim := -cam.global_transform.basis.z # full 3D aim (where you look)
-	projectiles.append({"mesh": bolt, "vel": aim.normalized() * PROJ_SPEED, "life": 1.5})
+	var aim := -cam.global_transform.basis.z
+	projectiles.append({"mesh": bolt, "vel": aim.normalized() * PROJ_SPEED, "life": 1.6})
 
 
 func _update_combat(delta: float) -> void:
@@ -251,18 +471,22 @@ func _update_combat(delta: float) -> void:
 	ranged_cd = max(0.0, ranged_cd - delta)
 
 	var dcenter := dummy_pos + Vector3(0, 1.0, 0)
+	var bcenter := boss_root.global_position + Vector3(0, 2.0, 0) if boss_root else Vector3.ZERO
 	for i in range(projectiles.size() - 1, -1, -1):
 		var p = projectiles[i]
 		p.mesh.position += p.vel * delta
 		p.life -= delta
-		var hit: bool = p.mesh.position.distance_to(dcenter) < 0.7
-		if hit:
+		var done := false
+		if p.mesh.position.distance_to(dcenter) < 0.7:
 			_hit_dummy(randi_range(25, 38))
-		if hit or p.life <= 0.0 or p.mesh.position.y < 0.0:
+			done = true
+		elif not boss_dead and p.mesh.position.distance_to(bcenter) < 2.2:
+			_hit_boss(randi_range(20, 32))
+			done = true
+		if done or p.life <= 0.0 or p.mesh.position.y < 0.0:
 			p.mesh.queue_free()
 			projectiles.remove_at(i)
 
-	# Dummy hit flash + HP regen.
 	if dummy_flash > 0.0:
 		dummy_flash = max(0.0, dummy_flash - delta)
 		dummy_mat.emission_enabled = true
@@ -292,3 +516,20 @@ func _spawn_damage(pos: Vector3, dmg: int) -> void:
 	tw.tween_property(label, "position:y", pos.y + 1.0, 0.7)
 	tw.parallel().tween_property(label, "modulate:a", 0.0, 0.7)
 	tw.tween_callback(label.queue_free)
+
+
+func _banner(text: String) -> void:
+	if not hud_banner:
+		return
+	hud_banner.text = text
+	hud_banner.modulate = Color(1, 1, 1, 1)
+	var tw := create_tween()
+	tw.tween_interval(1.0)
+	tw.tween_property(hud_banner, "modulate:a", 0.0, 1.2)
+
+
+func _update_hud() -> void:
+	if hud_player_fill:
+		hud_player_fill.size = Vector2(296.0 * (player_hp / PLAYER_MAX), 20)
+	if hud_boss_fill:
+		hud_boss_fill.size = Vector2(596.0 * (boss_hp / BOSS_MAX), 14)
