@@ -1,8 +1,10 @@
 # Shared helpers for merging external Mixamo animation clips onto a character,
 # and for measuring/fitting a model. Mixamo clips (downloaded "without skin")
-# share the `mixamorig:*` skeleton, so copying their bone *rotations* onto any
-# Mixamo character retargets the motion. We copy rotation tracks only (positions
-# depend on each character's bone lengths and would displace/scale the rig).
+# share the `mixamorig:*` skeleton, so copying their bone *rotations* (and scales)
+# onto any Mixamo character retargets the motion. Positions are skipped (they
+# depend on each character's bone lengths and would displace/stretch the rig),
+# and bones are matched by a normalized name so import-time name mangling
+# (mixamorig prefix / colon) doesn't break the match.
 class_name AnimUtil
 extends RefCounted
 
@@ -31,23 +33,50 @@ static func merge(target_anim: AnimationPlayer, target_skel: Skeleton3D, glb_pat
 	var root_node := target_anim.get_node(target_anim.root_node)
 	var skel_rel := String(root_node.get_path_to(target_skel))
 
+	# Map normalized bone name -> bone name on the target skeleton. Normalizing
+	# (drop "mixamorig", strip punctuation/case) makes matching robust to how
+	# Godot stores the `mixamorig:` prefix/colon differently per imported file.
+	var bone_by_key := {}
+	for bi in target_skel.get_bone_count():
+		bone_by_key[_norm(target_skel.get_bone_name(bi))] = target_skel.get_bone_name(bi)
+
 	var out := Animation.new()
 	out.length = source_anim.length
 	var added := 0
+	var skipped_type := 0
+	var skipped_bone := 0
+	var sample_src := ""
 	for ti in source_anim.get_track_count():
-		if source_anim.track_get_type(ti) != Animation.TYPE_ROTATION_3D:
+		var ttype := source_anim.track_get_type(ti)
+		# Copy rotations (the retargetable part) and scales; skip positions so a
+		# different rig's bone lengths can't displace/stretch the character.
+		if ttype != Animation.TYPE_ROTATION_3D and ttype != Animation.TYPE_SCALE_3D:
+			skipped_type += 1
 			continue
-		var bone := String(source_anim.track_get_path(ti).get_concatenated_subnames())
-		if bone == "" or target_skel.find_bone(bone) < 0:
+		var raw := String(source_anim.track_get_path(ti).get_concatenated_subnames())
+		if raw == "":
+			var p := source_anim.track_get_path(ti)
+			if p.get_name_count() > 0:
+				raw = String(p.get_name(p.get_name_count() - 1))
+		if sample_src == "":
+			sample_src = raw
+		var key := _norm(raw)
+		if not bone_by_key.has(key):
+			skipped_bone += 1
 			continue
-		var nt := out.add_track(Animation.TYPE_ROTATION_3D)
-		out.track_set_path(nt, NodePath(skel_rel + ":" + bone))
+		var nt := out.add_track(ttype)
+		out.track_set_path(nt, NodePath(skel_rel + ":" + bone_by_key[key]))
 		for ki in source_anim.track_get_key_count(ti):
-			out.rotation_track_insert_key(nt, source_anim.track_get_key_time(ti, ki), source_anim.track_get_key_value(ti, ki))
+			if ttype == Animation.TYPE_ROTATION_3D:
+				out.rotation_track_insert_key(nt, source_anim.track_get_key_time(ti, ki), source_anim.track_get_key_value(ti, ki))
+			else:
+				out.scale_track_insert_key(nt, source_anim.track_get_key_time(ti, ki), source_anim.track_get_key_value(ti, ki))
 		added += 1
 	inst.queue_free()
-	print("AnimUtil.merge ", glb_path.get_file(), " -> ", new_name,
-		": skel='", skel_rel, "' src_tracks=", source_anim.get_track_count(), " added=", added)
+	var sample_tgt: String = target_skel.get_bone_name(0) if target_skel.get_bone_count() > 0 else "?"
+	print("AnimUtil.merge ", glb_path.get_file(), " -> ", new_name, ": added=", added,
+		" skip_type=", skipped_type, " skip_bone=", skipped_bone,
+		" src_bone='", sample_src, "' tgt_bone='", sample_tgt, "'")
 	if added == 0:
 		return ""
 
@@ -59,6 +88,18 @@ static func merge(target_anim: AnimationPlayer, target_skel: Skeleton3D, glb_pat
 		lib.remove_animation(new_name)
 	lib.add_animation(new_name, out)
 	return new_name
+
+
+# Normalize a bone name for matching: lowercase, drop the "mixamorig" prefix,
+# and keep only letters/digits (so "mixamorig:LeftArm", "mixamorig_LeftArm" and
+# "LeftArm" all collapse to "leftarm").
+static func _norm(n: String) -> String:
+	var s := n.to_lower().replace("mixamorig", "")
+	var out := ""
+	for c in s:
+		if (c >= "a" and c <= "z") or (c >= "0" and c <= "9"):
+			out += c
+	return out
 
 
 static func find_anim_player(root: Node) -> AnimationPlayer:
