@@ -329,16 +329,44 @@ let mixer = null;
 const anim = { idle: null, run: null, attack: null, current: null, attacking: false };
 
 // Re-apply the live-tunable scale + facing to the loaded model.
+// Measure a model's true size. For rigged characters the mesh bounding box is
+// unreliable (it reflects the bind geometry, not the posed/scaled skeleton), so
+// we measure the SKELETON's bones — consistent across any humanoid rig. Falls
+// back to the mesh box for non-skinned models.
+const _bp = new THREE.Vector3();
+function modelBounds(model) {
+  model.updateWorldMatrix(true, true);
+  const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+  const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+  let bones = 0;
+  model.traverse((o) => {
+    if (o.isBone) {
+      o.getWorldPosition(_bp);
+      min.min(_bp);
+      max.max(_bp);
+      bones++;
+    }
+  });
+  if (bones < 3 || !Number.isFinite(min.y)) {
+    const box = new THREE.Box3().setFromObject(model);
+    if (box.isEmpty() || !Number.isFinite(box.min.y)) return null;
+    box.min.copy(box.min);
+    box.max.copy(box.max);
+    return { height: box.max.y - box.min.y, minY: box.min.y, cx: (box.min.x + box.max.x) / 2, cz: (box.min.z + box.max.z) / 2 };
+  }
+  return { height: max.y - min.y, minY: min.y, cx: (min.x + max.x) / 2, cz: (min.z + max.z) / 2 };
+}
+
 function rescaleHero() {
   if (!heroModel) return;
   heroModel.scale.setScalar(tune.scale / heroNaturalHeight);
   heroModel.rotation.y = (tune.yaw * Math.PI) / 180;
-  heroModel.updateWorldMatrix(true, true);
-  const box = new THREE.Box3().setFromObject(heroModel);
-  // Guard: skinned meshes can yield an empty/NaN box — don't push the model to
-  // NaN (which makes it vanish).
-  if (!box.isEmpty() && Number.isFinite(box.min.y)) {
-    heroModel.position.y -= box.min.y - hero.position.y; // feet on the floor
+  const b = modelBounds(heroModel);
+  if (b) {
+    // Center on the hero and stand feet on the floor (hero.position.y).
+    heroModel.position.x -= b.cx - hero.position.x;
+    heroModel.position.z -= b.cz - hero.position.z;
+    heroModel.position.y -= b.minY - hero.position.y;
   }
 }
 
@@ -352,11 +380,9 @@ function setupHeroModel(sceneRoot) {
     }
   });
   heroModel.scale.setScalar(1);
-  heroModel.updateWorldMatrix(true, true); // so nested-transform models measure right
-  const box = new THREE.Box3().setFromObject(heroModel);
-  const h = box.max.y - box.min.y;
-  heroNaturalHeight = Number.isFinite(h) && h > 0.01 ? h : 1.8; // guard empty box
   hero.add(heroModel);
+  const b = modelBounds(heroModel);
+  heroNaturalHeight = b && b.height > 0.01 ? b.height : 1.8; // skeleton-based
   rescaleHero();
   heroBody.visible = false; // hide the capsule
   mixer = new THREE.AnimationMixer(heroModel);
