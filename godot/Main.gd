@@ -32,6 +32,11 @@ var yaw := 0.0
 var pitch := -0.2
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 var cur_anim := ""
+var idle_anim := ""
+var run_anim := ""
+var weapon: MeshInstance3D
+var weapon_attach: BoneAttachment3D
+var weapon_scaled := false
 var model_facing := 0.0
 
 var player_hp := PLAYER_MAX
@@ -195,9 +200,8 @@ func _build_player(pos: Vector3) -> void:
 	if scene:
 		model = scene.instantiate()
 		player.add_child(model)
-		anim = model.find_child("AnimationPlayer", true, false)
-		if anim:
-			_play("Idle")
+		_setup_animation()
+		_attach_weapon()
 	else:
 		var fb := MeshInstance3D.new()
 		var caps := CapsuleMesh.new()
@@ -258,8 +262,74 @@ func _rect(c: Color, pos: Vector2, sz: Vector2) -> ColorRect:
 	return r
 
 
+func _setup_animation() -> void:
+	anim = model.find_child("AnimationPlayer", true, false)
+	if anim == null:
+		var aps := model.find_children("*", "AnimationPlayer", true, false)
+		if aps.size() > 0:
+			anim = aps[0]
+	if anim == null:
+		push_warning("Bossraid: no AnimationPlayer found on character")
+		return
+	var list := anim.get_animation_list()
+	print("Bossraid: character animations = ", list)
+	# Imported glTF clips don't loop by default — make locomotion clips loop.
+	for n in list:
+		var a := anim.get_animation(n)
+		if a:
+			a.loop_mode = Animation.LOOP_LINEAR
+	idle_anim = _match_anim(list, ["idle"])
+	run_anim = _match_anim(list, ["run", "jog", "walk"])
+	if idle_anim == "" and list.size() > 0:
+		idle_anim = list[0]
+	if run_anim == "":
+		run_anim = idle_anim
+	if idle_anim != "":
+		anim.play(idle_anim)
+		cur_anim = idle_anim
+
+
+func _match_anim(list, keys) -> String:
+	for n in list:
+		var ln := String(n).to_lower()
+		for k in keys:
+			if ln.find(k) != -1:
+				return n
+	return ""
+
+
+func _attach_weapon() -> void:
+	var skels := model.find_children("*", "Skeleton3D", true, false)
+	if skels.size() == 0:
+		return
+	var skel: Skeleton3D = skels[0]
+	var hand := -1
+	for i in skel.get_bone_count():
+		var clean := ""
+		for ch in skel.get_bone_name(i).to_lower():
+			if ch >= "a" and ch <= "z":
+				clean += ch
+		if clean.ends_with("righthand") or clean.ends_with("handr"):
+			hand = i
+			break
+	if hand < 0:
+		return
+	weapon_attach = BoneAttachment3D.new()
+	weapon_attach.bone_idx = hand
+	skel.add_child(weapon_attach)
+	weapon = MeshInstance3D.new()
+	var blade := BoxMesh.new()
+	blade.size = Vector3(0.06, 0.06, 1.1)
+	var bm := StandardMaterial3D.new()
+	bm.albedo_color = Color(0.85, 0.9, 1.0)
+	bm.metallic = 0.6
+	blade.material = bm
+	weapon.mesh = blade
+	weapon_attach.add_child(weapon)
+
+
 func _play(anim_name: String) -> void:
-	if anim and cur_anim != anim_name and anim.has_animation(anim_name):
+	if anim and anim_name != "" and cur_anim != anim_name and anim.has_animation(anim_name):
 		anim.play(anim_name, 0.2)
 		cur_anim = anim_name
 
@@ -318,9 +388,17 @@ func _physics_process(delta: float) -> void:
 			var target := atan2(dir.x, dir.z) + (PI if MODEL_FACE_FLIP else 0.0)
 			model_facing = lerp_angle(model_facing, target, 0.2)
 			model.rotation.y = model_facing
-		_play("Run")
+		_play(run_anim)
 	else:
-		_play("Idle")
+		_play(idle_anim)
+
+	# Size the held weapon to ~world scale (the hand bone may be heavily scaled).
+	if weapon_attach and not weapon_scaled:
+		var s: float = weapon_attach.global_transform.basis.get_scale().x
+		if s > 0.0001:
+			weapon.scale = Vector3.ONE / s
+			weapon.position = Vector3(0, 0, 0.55) / s
+			weapon_scaled = true
 
 	_update_boss(delta)
 	_update_combat(delta)
