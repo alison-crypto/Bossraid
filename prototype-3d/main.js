@@ -173,44 +173,43 @@ const MODEL_YAW_OFFSET = Math.PI; // flip if the model faces backward
 let heroModel = null;
 let heroNaturalHeight = 1;
 let handBone = null; // right-hand bone the weapon is parented to (if found)
+const heroModelYaw = selectedCharacter().modelYaw ?? 180; // per-rig facing
 const _ws = new THREE.Vector3();
 let mixer = null;
 // Animation controller: locomotion (idle/run) + a one-shot attack overlay.
 const anim = { idle: null, run: null, attack: null, current: null, attacking: false };
 
 // Re-apply the live-tunable scale + facing to the loaded model.
-// Measure a model's true size. For rigged characters the mesh bounding box is
-// unreliable (it reflects the bind geometry, not the posed/scaled skeleton), so
-// we measure the SKELETON's bones — consistent across any humanoid rig. Falls
-// back to the mesh box for non-skinned models.
-const _bp = new THREE.Vector3();
+// Measure a model's true VISUAL size: union each mesh's (computed) bounding box
+// transformed to world space. Robust for skinned characters and any root
+// scaling (e.g. Soldier's 0.01 root, Erika's metre-scale mesh).
+const _gb = new THREE.Box3();
 function modelBounds(model) {
   model.updateWorldMatrix(true, true);
-  const min = new THREE.Vector3(Infinity, Infinity, Infinity);
-  const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
-  let bones = 0;
+  const box = new THREE.Box3();
+  let has = false;
   model.traverse((o) => {
-    if (o.isBone) {
-      o.getWorldPosition(_bp);
-      min.min(_bp);
-      max.max(_bp);
-      bones++;
-    }
+    const g = o.geometry;
+    if (!g) return;
+    if (!g.boundingBox) g.computeBoundingBox();
+    if (!g.boundingBox) return;
+    _gb.copy(g.boundingBox).applyMatrix4(o.matrixWorld);
+    box.union(_gb);
+    has = true;
   });
-  if (bones < 3 || !Number.isFinite(min.y)) {
-    const box = new THREE.Box3().setFromObject(model);
-    if (box.isEmpty() || !Number.isFinite(box.min.y)) return null;
-    box.min.copy(box.min);
-    box.max.copy(box.max);
-    return { height: box.max.y - box.min.y, minY: box.min.y, cx: (box.min.x + box.max.x) / 2, cz: (box.min.z + box.max.z) / 2 };
-  }
-  return { height: max.y - min.y, minY: min.y, cx: (min.x + max.x) / 2, cz: (min.z + max.z) / 2 };
+  if (!has || box.isEmpty() || !Number.isFinite(box.min.y)) return null;
+  return {
+    height: box.max.y - box.min.y,
+    minY: box.min.y,
+    cx: (box.min.x + box.max.x) / 2,
+    cz: (box.min.z + box.max.z) / 2,
+  };
 }
 
 function rescaleHero() {
   if (!heroModel) return;
   heroModel.scale.setScalar(tune.scale / heroNaturalHeight);
-  heroModel.rotation.y = (tune.yaw * Math.PI) / 180;
+  heroModel.rotation.y = (heroModelYaw * Math.PI) / 180;
   const b = modelBounds(heroModel);
   if (b) {
     // Center on the hero and stand feet on the floor (hero.position.y).
@@ -240,13 +239,16 @@ function setupHeroModel(sceneRoot) {
   // Standard weapon attach: parent the sword to the right-hand bone so it's
   // held and rides the arm through every animation (works for any humanoid rig
   // with a standard hand-bone name). Falls back to body-attached if not found.
-  handBone =
-    heroModel.getObjectByName('mixamorigRightHand') ||
-    heroModel.getObjectByName('RightHand') ||
-    heroModel.getObjectByName('mixamorig:RightHand') ||
-    heroModel.getObjectByName('Hand_R') ||
-    heroModel.getObjectByName('hand_r') ||
-    null;
+  // Match the right-hand bone by name suffix (handles mixamorig:RightHand,
+  // RightHand, Hand.R/Hand_R across rigs; colons/dots are sanitized on load).
+  // Exclude finger bones (RightHandIndex…) by requiring the cleaned name to END
+  // with "righthand" or "handr".
+  handBone = null;
+  heroModel.traverse((o) => {
+    if (handBone || !o.isBone) return;
+    const n = o.name.toLowerCase().replace(/[^a-z]/g, '');
+    if (/(righthand|handr)$/.test(n)) handBone = o;
+  });
   if (handBone) handBone.add(swordPivot); // reparent from hero into the hand
 }
 

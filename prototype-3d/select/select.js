@@ -41,27 +41,29 @@ const loader = new GLTFLoader();
 let mixer = null;
 let current = null;
 
-// Skeleton-based size measurement (mesh boxes are unreliable for rigged models).
-const _bp = new THREE.Vector3();
+// Visual size = union of each mesh's (computed) bounding box in world space.
+// Robust for skinned characters and any root scaling.
+const _gb = new THREE.Box3();
 function modelBounds(model) {
   model.updateWorldMatrix(true, true);
-  const min = new THREE.Vector3(Infinity, Infinity, Infinity);
-  const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
-  let bones = 0;
+  const box = new THREE.Box3();
+  let has = false;
   model.traverse((o) => {
-    if (o.isBone) {
-      o.getWorldPosition(_bp);
-      min.min(_bp);
-      max.max(_bp);
-      bones++;
-    }
+    const g = o.geometry;
+    if (!g) return;
+    if (!g.boundingBox) g.computeBoundingBox();
+    if (!g.boundingBox) return;
+    _gb.copy(g.boundingBox).applyMatrix4(o.matrixWorld);
+    box.union(_gb);
+    has = true;
   });
-  if (bones < 3 || !Number.isFinite(min.y)) {
-    const box = new THREE.Box3().setFromObject(model);
-    if (box.isEmpty() || !Number.isFinite(box.min.y)) return null;
-    return { height: box.max.y - box.min.y, minY: box.min.y, cx: (box.min.x + box.max.x) / 2, cz: (box.min.z + box.max.z) / 2 };
-  }
-  return { height: max.y - min.y, minY: min.y, cx: (min.x + max.x) / 2, cz: (min.z + max.z) / 2 };
+  if (!has || box.isEmpty() || !Number.isFinite(box.min.y)) return null;
+  return {
+    height: box.max.y - box.min.y,
+    minY: box.min.y,
+    cx: (box.min.x + box.max.x) / 2,
+    cz: (box.min.z + box.max.z) / 2,
+  };
 }
 
 function loadPreview(file) {
