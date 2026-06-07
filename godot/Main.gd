@@ -152,6 +152,16 @@ func _build_boss(pos: Vector3) -> void:
 		AnimUtil.fit_height(m, 3.4)
 		m.rotation.y = PI
 		boss_mat = null # multi-material model: skip the tint flash
+		# Give the boss a looping fight-idle so it isn't frozen in a T-pose.
+		var bap := AnimUtil.find_anim_player(m)
+		var bsk := AnimUtil.find_skeleton(m)
+		if bap and bsk:
+			var bi := AnimUtil.merge(bap, bsk, "res://models/anim/idle.glb", "Idle")
+			if bi != "":
+				var ba := bap.get_animation(bi)
+				if ba:
+					ba.loop_mode = Animation.LOOP_LINEAR
+				bap.play(bi)
 	else:
 		var body := MeshInstance3D.new()
 		var cyl := CylinderMesh.new()
@@ -278,17 +288,27 @@ func _setup_animation() -> void:
 	idle_anim = _match_anim(list, ["idle"])
 	run_anim = _match_anim(list, ["run", "jog", "walk"])
 	attack_anim = _match_anim(list, ["slash", "attack", "punch", "swing", "melee", "stab"])
+	# Merge external Mixamo clips, retargeted onto this hero's skeleton. We prefer
+	# the character's own idle/run when it has them (e.g. Soldier), and fall back
+	# to the merged clips for heroes that ship with only a T-pose (Vanguard/Erika/
+	# Maria). The sword Slash always comes from the merged clip so everyone swings.
+	skel = AnimUtil.find_skeleton(model)
+	if skel:
+		var m_idle := AnimUtil.merge(anim, skel, "res://models/anim/idle.glb", "FightIdle")
+		var m_run := AnimUtil.merge(anim, skel, "res://models/anim/run.glb", "RunSword")
+		var m_slash := AnimUtil.merge(anim, skel, "res://models/anim/slash.glb", "Slash")
+		if idle_anim == "" and m_idle != "":
+			idle_anim = m_idle
+		if run_anim == "" and m_run != "":
+			run_anim = m_run
+		if m_slash != "":
+			attack_anim = m_slash
+		print("Bossraid: merged idle=", m_idle, " run=", m_run, " slash=", m_slash)
 	if idle_anim == "" and list.size() > 0:
 		idle_anim = list[0]
 	if run_anim == "":
 		run_anim = idle_anim
-	# Merge a Mixamo sword-slash clip and use it as the melee attack. This
-	# retargets onto any Mixamo character, so every selectable hero can swing.
-	skel = AnimUtil.find_skeleton(model)
-	if skel:
-		var slash := AnimUtil.merge(anim, skel, "res://models/anim/slash.glb", "Slash")
-		if slash != "":
-			attack_anim = slash
+	print("Bossraid: using idle=", idle_anim, " run=", run_anim, " attack=", attack_anim)
 	# Imported glTF clips don't loop by default — loop only locomotion.
 	_set_loop(idle_anim, true)
 	_set_loop(run_anim, true)

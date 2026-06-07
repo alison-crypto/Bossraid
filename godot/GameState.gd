@@ -5,6 +5,7 @@ extends Node
 var characters := [
 	{"name": "Soldier", "file": "res://models/Soldier.glb", "flip": true},
 	{"name": "Vanguard", "file": "res://models/Vanguard.glb", "flip": true},
+	{"name": "Maria", "file": "res://models/Maria.glb", "flip": true},
 	{"name": "Erika Archer", "file": "res://models/Erika.glb", "flip": true},
 ]
 var selected := 0
