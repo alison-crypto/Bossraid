@@ -134,6 +134,22 @@ the specific page when you need exact API; the high-value areas for us:
 - **Networking (later LAN/co-op):** high-level multiplayer —
   `MultiplayerSpawner`, `MultiplayerSynchronizer`, `ENetMultiplayerPeer`.
 
+## Stats & damage (owner's formulas)
+
+Defined per character in `GameState.characters` (`str`/`dex`/`con`, `def` later
+from equipment) and applied in `Main.gd`:
+
+- **Impact force** `F = mass · accel`, with `mass = STR·1`, `accel = DEX·0.1` →
+  `F = STR·DEX·0.1`. Melee damage = `F · DAMAGE_K · type_mult` (light 1.0, heavy
+  `HEAVY_MULT`, kick 0.6). `DAMAGE_K` scales raw force into game damage.
+- **DEX also speeds swings**: each point removes `DEX_ANIM_PER_PT` (0.01s) from a
+  swing, so higher DEX = faster attacks + faster attack rate.
+- **Max Health** `= CON · STR · HEALTH_K`.
+- **DEF** (equipment, 0 for now) **subtracts directly** from incoming damage,
+  after block/parry reduction.
+- Tuning lives in constants at the top of `Main.gd`; a `Bossraid stats: …` line
+  prints the resolved values on launch.
+
 ## Do / don't
 
 - Do keep it runnable after every change; commit small. Tabs, not spaces.

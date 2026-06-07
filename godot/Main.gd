@@ -40,6 +40,14 @@ const BLOCK_REDUCTION := 0.2 # fraction of damage still taken while blocking
 const PARRY_WINDOW := 0.3
 const KICK_KNOCKBACK := 6.0
 
+# --- RPG stats / damage (player's formulas) -------------------------------
+# mass = STR*1, accel = DEX*0.1  ->  impact force F = STR*DEX*0.1 = melee damage.
+# DEX also shaves DEX_ANIM_PER_PT seconds off each swing. HP = CON*STR. DEF
+# (from equipment) subtracts directly from incoming damage.
+const DAMAGE_K := 3.0          # scales raw F into game damage (1.0 = raw force)
+const HEALTH_K := 1.0          # Health = CON * STR * HEALTH_K
+const DEX_ANIM_PER_PT := 0.01  # seconds removed from a swing per DEX point
+
 const PLAYER_MAX := 100.0
 const BOSS_MAX := 400.0
 const SLAM_RADIUS := 3.6
@@ -81,6 +89,11 @@ var weapon_scaled := false
 var has_weapon := true # false for characters with a built-in weapon (e.g. Maria)
 var model_facing := 0.0
 
+var player_str := 10
+var player_dex := 10
+var player_con := 10
+var player_def := 0 # from equipment (none yet)
+var player_max := PLAYER_MAX
 var player_hp := PLAYER_MAX
 var player_invuln := 0.0
 var player_dead := false
@@ -260,6 +273,13 @@ func _build_player(pos: Vector3) -> void:
 	var entry: Dictionary = GameState.current() # autoload; defaults to first character
 	face_flip = entry.get("flip", true)
 	has_weapon = entry.get("weapon", true)
+	player_str = int(entry.get("str", 10))
+	player_dex = int(entry.get("dex", 10))
+	player_con = int(entry.get("con", 10))
+	player_def = int(entry.get("def", 0))
+	player_max = max(1.0, float(player_con) * float(player_str) * HEALTH_K)
+	player_hp = player_max
+	print("Bossraid stats: STR=%d DEX=%d CON=%d DEF=%d -> HP=%.0f baseDmg=%.0f" % [player_str, player_dex, player_con, player_def, player_max, _attack_force() * DAMAGE_K])
 	var scene := load(entry.get("file", CHARACTER))
 	if scene:
 		model = scene.instantiate()
@@ -623,7 +643,8 @@ func _damage_player(dmg: int) -> void:
 			player_invuln = 0.4
 			return
 		dmg = int(round(dmg * BLOCK_REDUCTION)) # blocked: chip damage only
-	player_hp = max(0.0, player_hp - dmg)
+	var taken := max(0, dmg - player_def) # equipment defence subtracts directly
+	player_hp = max(0.0, player_hp - taken)
 	player_invuln = 0.7
 	if player_hp <= 0.0:
 		_player_die()
@@ -635,7 +656,7 @@ func _player_die() -> void:
 	await get_tree().create_timer(1.6).timeout
 	player.global_position = player_spawn
 	player.velocity = Vector3.ZERO
-	player_hp = PLAYER_MAX
+	player_hp = player_max
 	player_dead = false
 
 
@@ -703,12 +724,19 @@ func _do_kick() -> void:
 	_start_swing(kick_anim, ATTACK_SPEED)
 
 
-# Play a one-shot attack clip and schedule its hit at the impact point.
+# F = mass * accel, with mass = STR and accel = DEX * 0.1. Drives melee damage.
+func _attack_force() -> float:
+	return float(player_str) * (float(player_dex) * 0.1)
+
+
+# Play a one-shot attack clip and schedule its hit at the impact point. DEX
+# shortens the swing (faster attacks) by DEX_ANIM_PER_PT seconds per point.
 func _start_swing(clip: String, speed: float) -> void:
 	attacking = true
-	anim.play(clip, 0.1, speed)
+	var clip_len: float = anim.get_animation(clip).length
+	var swing: float = max(0.15, clip_len / speed - float(player_dex) * DEX_ANIM_PER_PT)
+	anim.play(clip, 0.1, clip_len / swing)
 	cur_anim = clip
-	var swing: float = anim.get_animation(clip).length / speed
 	attack_hit_t = max(0.05, swing * ATTACK_IMPACT)
 
 
@@ -748,15 +776,16 @@ func _apply_melee_hit() -> void:
 	var aim := -cam_yaw.global_transform.basis.z
 	aim.y = 0
 	aim = aim.normalized()
+	var dmg := int(max(1.0, round(_attack_force() * DAMAGE_K * attack_mult)))
 	var td := dummy_pos - player.global_position
 	td.y = 0
 	if td.length() < MELEE_RANGE + 0.5 and td.normalized().dot(aim) > 0.2:
-		_hit_dummy(int(round(randi_range(45, 65) * attack_mult)))
+		_hit_dummy(dmg)
 	if not boss_dead:
 		var tb := boss_root.global_position - player.global_position
 		tb.y = 0
 		if tb.length() < MELEE_RANGE + 2.2 and td_dot(tb, aim) > 0.0:
-			_hit_boss(int(round(randi_range(30, 45) * attack_mult)))
+			_hit_boss(dmg)
 			if attack_kick:
 				boss_root.global_position += tb.normalized() * KICK_KNOCKBACK * 0.2
 	attack_kick = false
@@ -860,6 +889,6 @@ func _banner(text: String) -> void:
 
 func _update_hud() -> void:
 	if hud_player_fill:
-		hud_player_fill.size = Vector2(296.0 * (player_hp / PLAYER_MAX), 20)
+		hud_player_fill.size = Vector2(296.0 * (player_hp / player_max), 20)
 	if hud_boss_fill:
 		hud_boss_fill.size = Vector2(596.0 * (boss_hp / BOSS_MAX), 14)
