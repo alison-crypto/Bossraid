@@ -57,6 +57,12 @@ var dummy_flash := 0.0
 
 # Boss
 var boss_root: Node3D
+var boss_model: Node3D
+var boss_anim: AnimationPlayer
+var boss_idle := ""
+var boss_walk := ""
+var boss_attack := ""
+var boss_clip := ""
 var boss_mat: StandardMaterial3D
 var boss_pos := Vector3(0, 0, -18)
 var boss_hp := BOSS_MAX
@@ -147,22 +153,24 @@ func _build_boss(pos: Vector3) -> void:
 	boss_root.position = pos
 	var scene := load("res://models/Pumpkin.glb")
 	if scene:
-		var m: Node3D = scene.instantiate()
-		boss_root.add_child(m)
+		boss_model = scene.instantiate()
+		boss_root.add_child(boss_model)
 		# Scale to ~3.4 m (a hulking boss) and stand its feet on the ground.
-		AnimUtil.fit_height(m, 3.4)
-		m.rotation.y = PI
+		AnimUtil.fit_height(boss_model, 3.4)
+		# Same converted-axis model as the heroes, so it faces movement with no
+		# flip; boss_root already aims it at the player (see _update_boss).
 		boss_mat = null # multi-material model: skip the tint flash
-		# Give the boss a looping fight-idle so it isn't frozen in a T-pose.
-		var bap := AnimUtil.find_anim_player(m)
-		var bsk := AnimUtil.find_skeleton(m)
-		if bap and bsk:
-			var bi := AnimUtil.merge(bap, bsk, "res://models/anim/idle.glb", "Idle")
-			if bi != "":
-				var ba := bap.get_animation(bi)
-				if ba:
-					ba.loop_mode = Animation.LOOP_LINEAR
-				bap.play(bi)
+		# Idle / walk (chase) / slam-attack clips, retargeted onto the boss rig.
+		boss_anim = AnimUtil.find_anim_player(boss_model)
+		var bsk := AnimUtil.find_skeleton(boss_model)
+		if boss_anim and bsk:
+			boss_idle = AnimUtil.merge(boss_anim, bsk, "res://models/anim/idle.glb", "Idle")
+			boss_walk = AnimUtil.merge(boss_anim, bsk, "res://models/anim/run.glb", "Walk")
+			boss_attack = AnimUtil.merge(boss_anim, bsk, "res://models/anim/hellslam.glb", "Slam")
+			_set_anim_loop(boss_anim, boss_idle, true)
+			_set_anim_loop(boss_anim, boss_walk, true)
+			_set_anim_loop(boss_anim, boss_attack, false)
+			_boss_play(boss_idle)
 	else:
 		var body := MeshInstance3D.new()
 		var cyl := CylinderMesh.new()
@@ -321,11 +329,21 @@ func _setup_animation() -> void:
 
 
 func _set_loop(anim_name: String, on: bool) -> void:
-	if anim_name == "" or not anim.has_animation(anim_name):
+	_set_anim_loop(anim, anim_name, on)
+
+
+func _set_anim_loop(ap: AnimationPlayer, anim_name: String, on: bool) -> void:
+	if ap == null or anim_name == "" or not ap.has_animation(anim_name):
 		return
-	var a := anim.get_animation(anim_name)
+	var a := ap.get_animation(anim_name)
 	if a:
 		a.loop_mode = Animation.LOOP_LINEAR if on else Animation.LOOP_NONE
+
+
+func _boss_play(anim_name: String) -> void:
+	if boss_anim and anim_name != "" and boss_clip != anim_name and boss_anim.has_animation(anim_name):
+		boss_anim.play(anim_name, 0.2)
+		boss_clip = anim_name
 
 
 func _on_anim_finished(finished_name) -> void:
@@ -474,10 +492,14 @@ func _update_boss(delta: float) -> void:
 		"idle":
 			if dist > 4.0:
 				boss_root.global_position += to.normalized() * 2.2 * delta
+				_boss_play(boss_walk)
+			else:
+				_boss_play(boss_idle)
 			boss_cd -= delta
 			if boss_cd <= 0.0 and dist < 16.0:
 				boss_state = "windup"
 				boss_t = 1.1
+				_boss_play(boss_attack)
 				slam_target = player.global_position
 				slam_target.y = 0.05
 				slam_ring.global_position = slam_target
