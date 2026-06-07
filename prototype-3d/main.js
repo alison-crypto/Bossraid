@@ -325,9 +325,8 @@ let heroNaturalHeight = 1;
 let handBone = null; // right-hand bone the weapon is parented to (if found)
 const _ws = new THREE.Vector3();
 let mixer = null;
-let actIdle = null;
-let actMove = null;
-let curAction = null;
+// Animation controller: locomotion (idle/run) + a one-shot attack overlay.
+const anim = { idle: null, run: null, attack: null, current: null, attacking: false };
 
 // Re-apply the live-tunable scale + facing to the loaded model.
 function rescaleHero() {
@@ -370,25 +369,45 @@ function setupHeroModel(sceneRoot) {
   if (handBone) handBone.add(swordPivot); // reparent from hero into the hand
 }
 
-function playClips(idleClip, moveClip) {
+// Build the action set from a model's embedded clips (idle / run|walk /
+// attack — punch|slash|attack|melee). The attack plays once and then hands
+// back to locomotion via the mixer 'finished' event.
+function buildActions(clips) {
   if (!mixer) return;
-  if (idleClip) {
-    actIdle = mixer.clipAction(idleClip);
-    actIdle.play();
-    curAction = actIdle;
+  const find = (re) => clips.find((a) => re.test(a.name));
+  const idleClip = find(/idle/i) || clips[0];
+  const runClip = find(/run|walk|jog/i) || idleClip;
+  const attackClip = find(/punch|slash|attack|melee|sword|stab|swing/i);
+  anim.idle = idleClip ? mixer.clipAction(idleClip) : null;
+  anim.run = runClip ? mixer.clipAction(runClip) : null;
+  anim.attack = attackClip ? mixer.clipAction(attackClip) : null;
+  if (anim.attack) {
+    anim.attack.setLoop(THREE.LoopOnce, 1);
+    anim.attack.clampWhenFinished = true;
   }
-  if (moveClip) actMove = mixer.clipAction(moveClip);
+  if (anim.idle) {
+    anim.idle.play();
+    anim.current = anim.idle;
+  }
+  mixer.addEventListener('finished', (e) => {
+    if (anim.attack && e.action === anim.attack) {
+      anim.attacking = false;
+      if (anim.current) {
+        anim.current.reset().setEffectiveWeight(1).play();
+        anim.current.crossFadeFrom(anim.attack, 0.15, false);
+      }
+    }
+  });
 }
 
-// Load the selected character (from the select screen), using its embedded
-// idle/run animations. Falls back to the Soldier if a model fails to load.
+// Load the selected character (from the select screen) with its animations.
+// Falls back to the Soldier if a model fails to load.
 function loadCharacter(file) {
   new GLTFLoader().load(
     `./models/${file}`,
     (gltf) => {
       setupHeroModel(gltf.scene);
-      const find = (re) => gltf.animations.find((a) => re.test(a.name));
-      playClips(find(/idle/i) || gltf.animations[0], find(/run|walk/i));
+      buildActions(gltf.animations);
     },
     undefined,
     () => {
@@ -398,16 +417,27 @@ function loadCharacter(file) {
 }
 loadCharacter(selectedCharacter().file);
 
-function setMoving(moving) {
-  if (!mixer || !actMove || !actIdle) return;
-  const to = moving ? actMove : actIdle;
-  if (curAction === to) return;
+// Crossfade between idle and run (skipped while an attack overlay is playing).
+function setLocomotion(moving) {
+  if (!mixer || anim.attacking) return;
+  const to = moving ? anim.run : anim.idle;
+  if (!to || anim.current === to) return;
   to.reset();
   to.enabled = true;
   to.setEffectiveWeight(1);
-  to.crossFadeFrom(curAction, 0.2, false);
+  if (anim.current) to.crossFadeFrom(anim.current, 0.2, false);
   to.play();
-  curAction = to;
+  anim.current = to;
+}
+
+// Trigger the one-shot attack animation (if the model has one).
+function playAttackAnim() {
+  if (!mixer || !anim.attack || anim.attacking) return;
+  anim.attacking = true;
+  anim.attack.reset();
+  anim.attack.setEffectiveWeight(1);
+  anim.attack.play();
+  if (anim.current) anim.attack.crossFadeFrom(anim.current, 0.1, false);
 }
 
 // --- Tunable parameters (live-editable via the on-screen panel) -------------
@@ -552,6 +582,7 @@ function doMelee() {
   if (meleeCd > 0 || !started) return;
   meleeCd = MELEE_CD;
   meleeT = MELEE_DUR;
+  playAttackAnim(); // body attack animation (if the model has one)
   // Face where we're aiming so the swing reads correctly.
   hero.rotation.y = Math.atan2(lastForward.x, lastForward.z);
   const dx = DUMMY_POS.x - hero.position.x;
@@ -837,7 +868,7 @@ function update(dt) {
 
   // Drive the model's idle/run animation from movement.
   if (mixer) {
-    setMoving(move.lengthSq() > 0 && hero.position.y <= groundY + 0.05);
+    setLocomotion(move.lengthSq() > 0 && hero.position.y <= groundY + 0.05);
     mixer.update(dt);
   }
   // Keep the held sword a consistent world size regardless of the hand bone's
