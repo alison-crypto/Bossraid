@@ -34,13 +34,22 @@ it). Implemented so far:
 - **Combat:** left-click melee (range + front-arc), right-click ranged bolt;
   floating `Label3D` damage numbers.
 - **Training dummy** (HP + regen) for practice.
-- **Floor-1 boss (Stone Golem):** faces/chases the player, telegraphed ground
-  slam (red ring wind-up → strike, damages player if inside), idle/windup/
-  recover state machine; boss HP, takes player damage; VICTORY/DEFEATED banner;
-  boss + player respawn.
+- **Floor-1 boss (Pumpkin Golem):** the `Pumpkinhulk` model scaled to ~3.4 m;
+  faces/chases the player, telegraphed ground slam (red ring wind-up → strike,
+  damages player if inside), idle/windup/recover state machine; boss HP, takes
+  player damage; VICTORY/DEFEATED banner; boss + player respawn.
 - **HUD** (CanvasLayer): player HP bar, boss HP bar + name, banner.
-- Models: `Soldier.glb` (rigged + Idle/Run/Walk) and `Erika.glb` (Mixamo char,
-  **no animation baked in** — needs retargeted clips).
+- **Character select** (`Select.tscn`/`Select.gd`, the main scene): a live 3D
+  preview of the highlighted hero playing a boxing clip on a slow turntable (so
+  they aren't in a T-pose) + a button per character. Picks store into the
+  `GameState` autoload and load the arena.
+- **Animation retargeting** (`AnimUtil.gd`): merges a single Mixamo clip from an
+  external `.glb` onto a character's `AnimationPlayer` by copying its **rotation**
+  tracks onto the target skeleton (works across any Mixamo `mixamorig:*` rig).
+  Used for the sword **Slash** (melee attack) and the select-screen **Boxing**.
+- Models: `Soldier.glb` (Idle/Run/Walk), `Vanguard.glb`, `Erika.glb` — all share
+  the Mixamo skeleton. Extra clips live in `models/anim/` (`slash.glb`,
+  `boxing.glb`); add more there and merge them via `AnimUtil`.
 
 > Note: written without running Godot in the sandbox — expect small fixes on
 > first run. Keep it runnable; fix parse/runtime errors before adding more.

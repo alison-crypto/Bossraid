@@ -37,6 +37,7 @@ var run_anim := ""
 var attack_anim := ""
 var attacking := false
 var face_flip := true
+var skel: Skeleton3D
 var weapon: MeshInstance3D
 var weapon_attach: BoneAttachment3D
 var weapon_scaled := false
@@ -141,33 +142,29 @@ func _build_dummy(pos: Vector3) -> void:
 
 func _build_boss(pos: Vector3) -> void:
 	boss_root = Node3D.new()
-	var body := MeshInstance3D.new()
-	var cyl := CylinderMesh.new()
-	cyl.top_radius = 1.5
-	cyl.bottom_radius = 2.0
-	cyl.height = 4.0
-	cyl.radial_segments = 6
-	boss_mat = StandardMaterial3D.new()
-	boss_mat.albedo_color = Color(0.54, 0.42, 0.33)
-	cyl.material = boss_mat
-	body.mesh = cyl
-	body.position = Vector3(0, 2.0, 0)
-	boss_root.add_child(body)
-	var core := MeshInstance3D.new()
-	var sph := SphereMesh.new()
-	sph.radius = 0.7
-	sph.height = 1.4
-	var cm := StandardMaterial3D.new()
-	cm.albedo_color = Color(1, 0.5, 0.2)
-	cm.emission_enabled = true
-	cm.emission = Color(1, 0.4, 0.1)
-	cm.emission_energy_multiplier = 2.0
-	sph.material = cm
-	core.mesh = sph
-	core.position = Vector3(0, 2.4, 0)
-	boss_root.add_child(core)
-	boss_root.position = pos
 	add_child(boss_root)
+	boss_root.position = pos
+	var scene := load("res://models/Pumpkin.glb")
+	if scene:
+		var m: Node3D = scene.instantiate()
+		boss_root.add_child(m)
+		# Scale to ~3.4 m (a hulking boss) and stand its feet on the ground.
+		AnimUtil.fit_height(m, 3.4)
+		m.rotation.y = PI
+		boss_mat = null # multi-material model: skip the tint flash
+	else:
+		var body := MeshInstance3D.new()
+		var cyl := CylinderMesh.new()
+		cyl.top_radius = 1.5
+		cyl.bottom_radius = 2.0
+		cyl.height = 4.0
+		cyl.radial_segments = 6
+		boss_mat = StandardMaterial3D.new()
+		boss_mat.albedo_color = Color(0.54, 0.42, 0.33)
+		cyl.material = boss_mat
+		body.mesh = cyl
+		body.position = Vector3(0, 2.0, 0)
+		boss_root.add_child(body)
 
 	slam_ring = MeshInstance3D.new()
 	var ring := CylinderMesh.new()
@@ -243,7 +240,7 @@ func _build_hud() -> void:
 
 	# Boss bar (top-center, 1280-wide design).
 	var name_label := Label.new()
-	name_label.text = "STONE GOLEM"
+	name_label.text = "PUMPKIN GOLEM"
 	name_label.position = Vector2(340, 18)
 	name_label.add_theme_font_size_override("font_size", 18)
 	root.add_child(name_label)
@@ -285,6 +282,13 @@ func _setup_animation() -> void:
 		idle_anim = list[0]
 	if run_anim == "":
 		run_anim = idle_anim
+	# Merge a Mixamo sword-slash clip and use it as the melee attack. This
+	# retargets onto any Mixamo character, so every selectable hero can swing.
+	skel = AnimUtil.find_skeleton(model)
+	if skel:
+		var slash := AnimUtil.merge(anim, skel, "res://models/anim/slash.glb", "Slash")
+		if slash != "":
+			attack_anim = slash
 	# Imported glTF clips don't loop by default — loop only locomotion.
 	_set_loop(idle_anim, true)
 	_set_loop(run_anim, true)
@@ -319,10 +323,10 @@ func _match_anim(list, keys) -> String:
 
 
 func _attach_weapon() -> void:
-	var skels := model.find_children("*", "Skeleton3D", true, false)
-	if skels.size() == 0:
+	if skel == null:
+		skel = AnimUtil.find_skeleton(model)
+	if skel == null:
 		return
-	var skel: Skeleton3D = skels[0]
 	var hand := -1
 	for i in skel.get_bone_count():
 		var clean := ""
@@ -436,10 +440,10 @@ func _update_boss(delta: float) -> void:
 
 	if boss_flash > 0.0:
 		boss_flash = max(0.0, boss_flash - delta)
-		boss_mat.emission_enabled = true
-		boss_mat.emission = Color(0.6, 0.5, 0.4)
-	else:
-		boss_mat.emission_enabled = false
+	if boss_mat:
+		boss_mat.emission_enabled = boss_flash > 0.0
+		if boss_flash > 0.0:
+			boss_mat.emission = Color(0.6, 0.5, 0.4)
 
 	match boss_state:
 		"idle":
