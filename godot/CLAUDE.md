@@ -21,16 +21,43 @@ proved the feel and the SAO floor design but hit limits handling rigged
 characters, animation state, and scale. We moved to **Godot 4** for proper
 animation, physics, scene tooling, and room to grow.
 
-## Current state (this scaffold)
+## Current state
 
-- `project.godot`, `Main.tscn` (trivial: a Node3D running `Main.gd`).
-- `Main.gd` builds, in code: sky + sun, an open ground (infinite floor
-  collision) + reference grid, a training **dummy**, and a **third-person
-  player** (`CharacterBody3D`) that loads an animated glTF character
-  (`models/Soldier.glb`) with idle/run, mouse-look spring-arm camera, WASD +
-  sprint + jump.
-- `models/Soldier.glb` (rigged, has Idle/Run/Walk) and `models/Erika.glb` (a
-  Mixamo character; **no animation baked in** — needs retargeted clips).
+Everything is built in code in `Main.gd` (the `.tscn` is just a Node3D running
+it). Implemented so far:
+
+- Open ground (infinite floor) + sky/sun.
+- **Third-person player** (`CharacterBody3D`) loading an animated glTF
+  (`models/Soldier.glb`, Idle/Run), manual behind-the-player camera (yaw→pitch→
+  camera), layout-independent WASD + sprint + jump, model faces movement
+  (`MODEL_FACE_FLIP`).
+- **Combat:** left-click melee (range + front-arc), right-click ranged bolt;
+  floating `Label3D` damage numbers.
+- **Training dummy** (HP + regen) for practice.
+- **Floor-1 boss (Stone Golem):** faces/chases the player, telegraphed ground
+  slam (red ring wind-up → strike, damages player if inside), idle/windup/
+  recover state machine; boss HP, takes player damage; VICTORY/DEFEATED banner;
+  boss + player respawn.
+- **HUD** (CanvasLayer): player HP bar, boss HP bar + name, banner.
+- Models: `Soldier.glb` (rigged + Idle/Run/Walk) and `Erika.glb` (Mixamo char,
+  **no animation baked in** — needs retargeted clips).
+
+> Note: written without running Godot in the sandbox — expect small fixes on
+> first run. Keep it runnable; fix parse/runtime errors before adding more.
+
+## Next steps (suggested order)
+
+1. **Verify + polish** the boss fight feel (slam timing/telegraph clarity,
+   damage values, camera).
+2. **Refactor** the monolith `Main.gd` into scenes: `Player.tscn`, `Boss.tscn`,
+   `World.tscn`, a `HUD` — cleaner as it grows.
+3. **Erika + animations** — retarget Mixamo clips (idle/run/slash) onto Erika
+   (the `Longbow Locomotion Pack` is in the Drive folder), then a character
+   select.
+4. **Real Floor 1** — a proper map (terrain/props), a few wandering monsters, a
+   short labyrinth leading to the boss arena.
+5. **Progression** — beat boss → unlock next floor; a hub/teleport. Then RPG
+   systems, later networking.
 
 ## Conventions
 
@@ -53,18 +80,6 @@ animation, physics, scene tooling, and room to grow.
   resources onto the character's `AnimationPlayer`. An `AnimationTree` +
   state machine is the proper way to drive locomotion + attacks.
 - Erika needs her walk/run/attack clips wired this way (her own file has none).
-
-## Roadmap (suggested order)
-
-1. **Player controller polish** — gravity/jump feel, sprint, camera collision
-   (SpringArm already helps), maybe a proper `Player.tscn`.
-2. **Combat** — melee + ranged with hitboxes (Area3D), damage to the dummy,
-   hit feedback. Drive attack animations via an `AnimationTree`.
-3. **Character select** — pick a character; load + retarget its animations.
-4. **Floor 1** — a real map (terrain/props), a few monsters, a labyrinth, and a
-   floor boss with telegraphed attacks (port the Golem/Wraith designs).
-5. **Progression** — beat boss → unlock next floor; a hub/teleport.
-6. **Later** — RPG systems, then networking for co-op.
 
 ## Do / don't
 
