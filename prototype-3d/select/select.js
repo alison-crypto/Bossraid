@@ -57,14 +57,17 @@ function loadPreview(file) {
     // first so models with nested transforms (Sketchfab/FBX exports) measure right.
     model.updateWorldMatrix(true, true);
     let box = new THREE.Box3().setFromObject(model);
-    model.scale.multiplyScalar(1.8 / (box.max.y - box.min.y || 1));
+    const h = box.max.y - box.min.y;
+    if (Number.isFinite(h) && h > 0.01) model.scale.multiplyScalar(1.8 / h);
     model.updateWorldMatrix(true, true);
     box = new THREE.Box3().setFromObject(model);
-    const c = new THREE.Vector3();
-    box.getCenter(c);
-    model.position.x -= c.x;
-    model.position.z -= c.z;
-    model.position.y -= box.min.y;
+    if (!box.isEmpty() && Number.isFinite(box.min.y)) {
+      const c = new THREE.Vector3();
+      box.getCenter(c);
+      model.position.x -= c.x;
+      model.position.z -= c.z;
+      model.position.y -= box.min.y;
+    }
     current = model;
     const idle = gltf.animations.find((a) => /idle/i.test(a.name)) || gltf.animations[0];
     if (idle) {
