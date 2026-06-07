@@ -37,6 +37,7 @@ var run_anim := ""
 var attack_anim := ""
 var attacking := false
 var face_flip := true
+var skel: Skeleton3D
 var weapon: MeshInstance3D
 var weapon_attach: BoneAttachment3D
 var weapon_scaled := false
@@ -148,13 +149,7 @@ func _build_boss(pos: Vector3) -> void:
 		var m: Node3D = scene.instantiate()
 		boss_root.add_child(m)
 		# Scale to ~3.4 m (a hulking boss) and stand its feet on the ground.
-		m.scale = Vector3.ONE
-		var b := modelBounds(m)
-		var s: float = 3.4 / (b.height if b else 1.8)
-		m.scale = Vector3(s, s, s)
-		b = modelBounds(m)
-		if b:
-			m.position.y -= b.minY - boss_root.global_position.y
+		AnimUtil.fit_height(m, 3.4)
 		m.rotation.y = PI
 		boss_mat = null # multi-material model: skip the tint flash
 	else:
@@ -287,6 +282,13 @@ func _setup_animation() -> void:
 		idle_anim = list[0]
 	if run_anim == "":
 		run_anim = idle_anim
+	# Merge a Mixamo sword-slash clip and use it as the melee attack. This
+	# retargets onto any Mixamo character, so every selectable hero can swing.
+	skel = AnimUtil.find_skeleton(model)
+	if skel:
+		var slash := AnimUtil.merge(anim, skel, "res://models/anim/slash.glb", "Slash")
+		if slash != "":
+			attack_anim = slash
 	# Imported glTF clips don't loop by default — loop only locomotion.
 	_set_loop(idle_anim, true)
 	_set_loop(run_anim, true)
@@ -321,10 +323,10 @@ func _match_anim(list, keys) -> String:
 
 
 func _attach_weapon() -> void:
-	var skels := model.find_children("*", "Skeleton3D", true, false)
-	if skels.size() == 0:
+	if skel == null:
+		skel = AnimUtil.find_skeleton(model)
+	if skel == null:
 		return
-	var skel: Skeleton3D = skels[0]
 	var hand := -1
 	for i in skel.get_bone_count():
 		var clean := ""
