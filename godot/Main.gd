@@ -699,7 +699,7 @@ func _damage_player(dmg: int) -> void:
 			player_invuln = 0.4
 			return
 		dmg = int(round(dmg * BLOCK_REDUCTION)) # blocked: chip damage only
-	var taken := max(0, dmg - player_def) # equipment defence subtracts directly
+	var taken: int = max(0, dmg - player_def) # equipment defence subtracts directly
 	player_hp = max(0.0, player_hp - taken)
 	player_invuln = 0.7
 	if player_hp <= 0.0:
