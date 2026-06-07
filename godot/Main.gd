@@ -962,7 +962,7 @@ func _light_damage() -> int:
 func _heavy_damage() -> int:
 	var base := _force_base()
 	var wdmg := float(GameState.weapon_data().get("damage", 0))
-	var mult := heavy_mult + HEAVY_STR_STEP * floor(player_str / 10.0)
+	var mult: float = heavy_mult + HEAVY_STR_STEP * floor(player_str / 10.0)
 	return int(round(max(1.0, (base + wdmg) * mult)))
 
 

@@ -6,7 +6,9 @@
 class_name GameMenu
 extends CanvasLayer
 
-var main: Main # back-reference to the game (typed; Main + GameMenu cross-reference)
+var main # back-reference to Main. Untyped on purpose: Main references the
+# GameMenu type, so GameMenu must NOT reference the Main type back (a class_name
+# cycle fails to resolve — "Could not find type GameMenu"). Access stays dynamic.
 
 var root: Control
 var panel: Panel
