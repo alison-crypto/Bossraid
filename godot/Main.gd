@@ -104,8 +104,10 @@ var model_facing := 0.0
 var player_str := 10
 var player_dex := 10
 var player_con := 10
-var player_def := 0 # from equipment (none yet)
-var player_boots_dmg := 0 # kick damage source (boots/equipment; none yet)
+var player_def := 0 # total = base + equipped armor; subtracts from incoming damage
+var player_boots_dmg := 0 # total = base + equipped boots; flat damage on the kick
+var player_def_base := 0 # character's innate defence (before equipment)
+var player_boots_base := 0 # character's innate kick damage (before equipment)
 var player_max := PLAYER_MAX
 var player_hp := PLAYER_MAX
 var player_invuln := 0.0
@@ -150,6 +152,7 @@ var hud_player_fill: ColorRect
 var hud_boss_fill: ColorRect
 var hud_banner: Label
 var hud_weapon: Label
+var hud_gear: Label
 
 
 func _ready() -> void:
@@ -290,11 +293,12 @@ func _build_player(pos: Vector3) -> void:
 	player_str = int(entry.get("str", 10))
 	player_dex = int(entry.get("dex", 10))
 	player_con = int(entry.get("con", 10))
-	player_def = int(entry.get("def", 0))
-	player_boots_dmg = int(entry.get("boots", 0))
+	player_def_base = int(entry.get("def", 0))
+	player_boots_base = int(entry.get("boots", 0))
+	_apply_equipment() # sets player_def / player_boots_dmg from base + equipped gear
 	player_max = max(1.0, float(player_con) * float(player_str) * HEALTH_K)
 	player_hp = player_max
-	print("Bossraid stats: STR=%d DEX=%d CON=%d DEF=%d -> HP=%.0f force=%.2f (light w/50dmg=%.0f)" % [player_str, player_dex, player_con, player_def, player_max, _force_base(), _force_base() + 50.0])
+	print("Bossraid stats: STR=%d DEX=%d CON=%d DEF=%d (%s) boots=%s -> HP=%.0f force=%.2f (light w/50dmg=%.0f)" % [player_str, player_dex, player_con, player_def, String(GameState.armor_data().get("name", "Cloth")), String(GameState.boots_data().get("name", "Bare Feet")), player_max, _force_base(), _force_base() + 50.0])
 	var scene := load(entry.get("file", CHARACTER))
 	if scene:
 		model = scene.instantiate()
@@ -358,6 +362,13 @@ func _build_hud() -> void:
 	hud_weapon.add_theme_font_size_override("font_size", 18)
 	root.add_child(hud_weapon)
 	_update_weapon_hud()
+
+	# Armor / boots (bottom-left, above the weapon line). [R] / [T] cycle.
+	hud_gear = Label.new()
+	hud_gear.position = Vector2(24, 636)
+	hud_gear.add_theme_font_size_override("font_size", 16)
+	root.add_child(hud_gear)
+	_update_gear_hud()
 
 
 func _rect(c: Color, pos: Vector2, sz: Vector2) -> ColorRect:
@@ -522,6 +533,25 @@ func _equip_weapon(i: int) -> void:
 	_update_weapon_hud()
 
 
+# Switch armor: recompute defence (base + equipped) and refresh the HUD.
+func _equip_armor(i: int) -> void:
+	GameState.armor = clampi(i, 0, GameState.armors.size() - 1)
+	_apply_equipment()
+
+
+# Switch boots: recompute kick damage (base + equipped) and refresh the HUD.
+func _equip_boots(i: int) -> void:
+	GameState.boot = clampi(i, 0, GameState.boots.size() - 1)
+	_apply_equipment()
+
+
+# Resolve equipped gear into the live stats the damage formulas read.
+func _apply_equipment() -> void:
+	player_def = player_def_base + int(GameState.armor_data().get("def", 0))
+	player_boots_dmg = player_boots_base + int(GameState.boots_data().get("kick", 0))
+	_update_gear_hud()
+
+
 func _play(anim_name: String) -> void:
 	if anim and anim_name != "" and cur_anim != anim_name and anim.has_animation(anim_name):
 		anim.play(anim_name, 0.2)
@@ -547,6 +577,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		_equip_weapon((GameState.weapon + 1) % GameState.weapons.size())
 	elif event is InputEventKey and event.pressed and not event.echo and event.keycode >= KEY_1 and event.keycode <= KEY_6:
 		_equip_weapon(event.keycode - KEY_1)
+	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_R:
+		_equip_armor((GameState.armor + 1) % GameState.armors.size())
+	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_T:
+		_equip_boots((GameState.boot + 1) % GameState.boots.size())
 	elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
@@ -974,6 +1008,13 @@ func _banner(text: String) -> void:
 func _update_weapon_hud() -> void:
 	if hud_weapon:
 		hud_weapon.text = "⚔ %s   [Tab] / [1-6] switch" % String(GameState.weapon_data().get("name", "Sword"))
+
+
+func _update_gear_hud() -> void:
+	if hud_gear:
+		var a: Dictionary = GameState.armor_data()
+		var b: Dictionary = GameState.boots_data()
+		hud_gear.text = "🛡 %s (DEF %d) [R]    🥾 %s (+%d kick) [T]" % [String(a.get("name", "Cloth")), player_def, String(b.get("name", "Bare Feet")), player_boots_dmg]
 
 
 func _update_hud() -> void:

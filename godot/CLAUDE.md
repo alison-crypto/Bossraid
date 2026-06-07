@@ -153,10 +153,26 @@ from equipment) and applied in `Main.gd`:
   Impact damage `= 0.5·mass·v² + bow_damage`; range emerges from v0 + mass.
   (`_do_ranged` + projectile loop in `_update_combat`.)
 - **Max Health** `= CON · STR · HEALTH_K`.
-- **DEF** (equipment, 0 for now) **subtracts directly** from incoming damage,
-  after block/parry reduction.
+- **DEF** (equipment) **subtracts directly** from incoming damage, after
+  block/parry reduction. See **Equipment** below.
 - Tuning lives in constants at the top of `Main.gd`; a `Bossraid stats: …` line
   prints the resolved values on launch.
+
+## Equipment (armor + boots)
+
+Data-driven like weapons, in `GameState`:
+
+- **`armors`** (each `{name, def}`) — `def` feeds **DEF** (subtracts from
+  incoming damage). Cycle in-game with **[R]**.
+- **`boots`** (each `{name, kick}`) — `kick` is the flat damage added to the
+  **Kick** attack (which ignores the weapon). Cycle in-game with **[T]**.
+
+`Main._apply_equipment()` resolves the equipped pieces into `player_def` /
+`player_boots_dmg` as `base + equipped` (the `base` is the character's innate
+`def`/`boots` from `GameState.characters`, 0 for current characters). Called on
+build and whenever gear changes; the HUD shows the active armor/boots + DEF.
+Stat-only for now — no armor mesh on the model yet (a TODO alongside real
+weapon models).
 
 ## Weapons
 
