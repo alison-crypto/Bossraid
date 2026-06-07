@@ -34,6 +34,9 @@ var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9
 var cur_anim := ""
 var idle_anim := ""
 var run_anim := ""
+var attack_anim := ""
+var attacking := false
+var face_flip := true
 var weapon: MeshInstance3D
 var weapon_attach: BoneAttachment3D
 var weapon_scaled := false
@@ -196,7 +199,9 @@ func _build_player(pos: Vector3) -> void:
 	col.position = Vector3(0, 0.85, 0)
 	player.add_child(col)
 
-	var scene := load(CHARACTER)
+	var entry: Dictionary = GameState.current() # autoload; defaults to first character
+	face_flip = entry.get("flip", true)
+	var scene := load(entry.get("file", CHARACTER))
 	if scene:
 		model = scene.instantiate()
 		player.add_child(model)
@@ -273,20 +278,35 @@ func _setup_animation() -> void:
 		return
 	var list := anim.get_animation_list()
 	print("Bossraid: character animations = ", list)
-	# Imported glTF clips don't loop by default — make locomotion clips loop.
-	for n in list:
-		var a := anim.get_animation(n)
-		if a:
-			a.loop_mode = Animation.LOOP_LINEAR
 	idle_anim = _match_anim(list, ["idle"])
 	run_anim = _match_anim(list, ["run", "jog", "walk"])
+	attack_anim = _match_anim(list, ["slash", "attack", "punch", "swing", "melee", "stab"])
 	if idle_anim == "" and list.size() > 0:
 		idle_anim = list[0]
 	if run_anim == "":
 		run_anim = idle_anim
+	# Imported glTF clips don't loop by default — loop only locomotion.
+	_set_loop(idle_anim, true)
+	_set_loop(run_anim, true)
+	_set_loop(attack_anim, false) # one-shot
+	anim.animation_finished.connect(_on_anim_finished)
 	if idle_anim != "":
 		anim.play(idle_anim)
 		cur_anim = idle_anim
+
+
+func _set_loop(anim_name: String, on: bool) -> void:
+	if anim_name == "" or not anim.has_animation(anim_name):
+		return
+	var a := anim.get_animation(anim_name)
+	if a:
+		a.loop_mode = Animation.LOOP_LINEAR if on else Animation.LOOP_NONE
+
+
+func _on_anim_finished(finished_name) -> void:
+	if String(finished_name) == attack_anim:
+		attacking = false
+		cur_anim = "" # let _physics_process resume idle/run
 
 
 func _match_anim(list, keys) -> String:
@@ -383,14 +403,13 @@ func _physics_process(delta: float) -> void:
 		player.velocity.y = JUMP
 	player.move_and_slide()
 
-	if dir.length() > 0.1:
-		if model:
-			var target := atan2(dir.x, dir.z) + (PI if MODEL_FACE_FLIP else 0.0)
-			model_facing = lerp_angle(model_facing, target, 0.2)
-			model.rotation.y = model_facing
-		_play(run_anim)
-	else:
-		_play(idle_anim)
+	if dir.length() > 0.1 and model:
+		var target := atan2(dir.x, dir.z) + (PI if face_flip else 0.0)
+		model_facing = lerp_angle(model_facing, target, 0.2)
+		model.rotation.y = model_facing
+	# Locomotion animation (suppressed while an attack animation is playing).
+	if not attacking:
+		_play(run_anim if dir.length() > 0.1 else idle_anim)
 
 	# Size the held weapon to ~world scale (the hand bone may be heavily scaled).
 	if weapon_attach and not weapon_scaled:
@@ -502,6 +521,11 @@ func _do_melee() -> void:
 	if melee_cd > 0.0 or player_dead:
 		return
 	melee_cd = 0.45
+	# Play the attack animation (if the character has one), once.
+	if attack_anim != "" and anim:
+		attacking = true
+		anim.play(attack_anim, 0.1)
+		cur_anim = attack_anim
 	var aim := -cam_yaw.global_transform.basis.z
 	aim.y = 0
 	aim = aim.normalized()
