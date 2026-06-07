@@ -495,7 +495,7 @@ function playAttackAnim() {
 const TUNE_KEY = 'bossraid.tune.v1';
 const tune = Object.assign(
   { scale: 0.6, camDist: 3.2, eyeH: 2.65, shoulder: 1.05, fov: 77, yaw: 180,
-    wpx: 0.22, wpy: 0.5, wpz: 0.18, wrx: 0, wry: 0.5, wscale: 1 },
+    wpx: 0, wpy: 0, wpz: 0.05, wrx: 0, wry: 0, wscale: 0.8 },
   (() => {
     try {
       return JSON.parse(localStorage.getItem(TUNE_KEY) || '{}');
@@ -504,6 +504,10 @@ const tune = Object.assign(
     }
   })()
 );
+// Character size + weapon placement are now standardized in code (auto-fit to
+// every character via the skeleton + hand bone), so force the standards and
+// ignore any older per-character values that may be saved.
+Object.assign(tune, { scale: 0.6, wpx: 0, wpy: 0, wpz: 0.05, wrx: 0, wry: 0, wscale: 0.8 });
 function saveTune() {
   try {
     localStorage.setItem(TUNE_KEY, JSON.stringify(tune));
@@ -1040,19 +1044,13 @@ resize();
 // --- Live tuning panel ------------------------------------------------------
 // Lets you dial in character scale + camera live and read the values back, so
 // adjustments are exact (no guessing). Values persist in localStorage.
+// Camera-only now — character size + weapon are auto-fit per character.
 const tunerInputs = {
-  scale: document.getElementById('t-scale'),
   camDist: document.getElementById('t-cam'),
   eyeH: document.getElementById('t-eye'),
   shoulder: document.getElementById('t-shoulder'),
   fov: document.getElementById('t-fov'),
   yaw: document.getElementById('t-yaw'),
-  wpx: document.getElementById('t-wpx'),
-  wpy: document.getElementById('t-wpy'),
-  wpz: document.getElementById('t-wpz'),
-  wrx: document.getElementById('t-wrx'),
-  wry: document.getElementById('t-wry'),
-  wscale: document.getElementById('t-wscale'),
 };
 const tunerReadout = document.getElementById('t-readout');
 
@@ -1070,11 +1068,9 @@ function applyTune() {
 function updateReadout() {
   if (!tunerReadout) return;
   tunerReadout.textContent =
-    `scale ${(+tune.scale).toFixed(2)} · cam ${(+tune.camDist).toFixed(1)} · ` +
-    `eye ${(+tune.eyeH).toFixed(2)} · shoulder ${(+tune.shoulder).toFixed(2)} · ` +
-    `fov ${Math.round(tune.fov)} · yaw ${Math.round(tune.yaw)}\n` +
-    `weapon pos ${(+tune.wpx).toFixed(2)},${(+tune.wpy).toFixed(2)},${(+tune.wpz).toFixed(2)} · ` +
-    `rot ${(+tune.wrx).toFixed(2)},${(+tune.wry).toFixed(2)} · wscale ${(+tune.wscale).toFixed(2)}`;
+    `cam ${(+tune.camDist).toFixed(1)} · eye ${(+tune.eyeH).toFixed(2)} · ` +
+    `shoulder ${(+tune.shoulder).toFixed(2)} · fov ${Math.round(tune.fov)} · ` +
+    `yaw ${Math.round(tune.yaw)}`;
 }
 function syncTunerInputs() {
   for (const k in tunerInputs) {
