@@ -184,7 +184,40 @@ clip, `ranged`, `dmg`/`speed` mults, placeholder `len`/`thick`/`color` mesh).
 Stab, Bow. Held meshes are placeholder boxes until real weapon models arrive.
 Still TODO (see chat): a clickable weapon/keybind menu (needs an InputMap-action
 refactor for remapping), per-weapon mesh offset/orientation, bow draw anim,
-crouch, and distinct axe/dagger/double-sword clips.
+crouch, and distinct axe/dagger/double-sword clips. NOTE: Tab/1–6 (and R/T for
+armor/boots) now only cycle gear you **own** — see RPG windows below.
+
+## RPG windows (Stats / Inventory / Skills)
+
+`GameMenu.gd` (a `CanvasLayer`, instantiated by `Main._ready`) draws three
+in-code windows; open with **C / I / K**, close with **Esc** or ✕. Opening a
+window **pauses** the game (`get_tree().paused`) and frees the mouse; the layer
+is `PROCESS_MODE_ALWAYS` so its buttons work while paused and it owns its own
+`_unhandled_input` (Main is paused and can't). `refresh()` rebuilds content on
+every change; it calls Main's preview helpers so shown numbers == combat numbers.
+
+- **Stats** — free `[-]`/`[+]` on STR/DEX/CON (`Main._set_stat`, min 1, persisted
+  to `GameState.characters[selected]`, recomputes Max HP). Shows derived damage.
+- **Inventory** — owned-items system. `GameState.owned_weapons/armors/boots` are
+  index sets (you can only equip what you own — `equip_*_owned` gate); plus
+  `consumables` (Health Potion → `use_consumable` heals). Boss kills drop loot.
+- **Skills** — `GameState.skills` (id → unlocked/rank/max_rank/cost). Spend
+  `skill_points` (earned per boss kill, `SP_PER_BOSS`) to unlock/rank. Ranks feed
+  `Main._apply_skill_effects()`, which rebuilds runtime tunables (`heavy_mult`,
+  `kick_scale`, `kick_knock`, `dodge_iframes`, `block_reduction`, `parry_window`,
+  `ranged_v_bonus`) from the base consts. Heavy Strike starts **locked**.
+
+Progression lives in `GameState` (survives respawn/scene change): `level`,
+`skill_points`, owned gear, consumables, `roll_loot()`, `grant_boss_reward()`.
+
+## Combat: attack cancelling (active-frames)
+
+A swing fires its hit once at its impact frame (`attack_hit_t` → `_apply_melee_hit`).
+A new **basic attack** (light, heavy) waits for the current swing (`attacking`
+gate). **Dodge / kick / block / bow** can **cancel** a swing via `_cancel_swing()`:
+if cancelled before impact the hit is dropped (whiff); after impact it already
+landed. The swing lock is keyed to `locked_clip` (released on its
+`animation_finished`) with an `anim_lock_t` safety timeout so it can never deadlock.
 
 ## Do / don't
 

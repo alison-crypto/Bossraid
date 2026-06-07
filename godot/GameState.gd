@@ -49,6 +49,35 @@ var boots := [
 ]
 var boot := 0
 
+# --- Progression / inventory ------------------------------------------------
+# Owned gear: indices into the weapons/armors/boots tables. You can only equip
+# what you own; boss-kill loot expands these. Starting kit: one of each (basics).
+var owned_weapons := [0]   # Sword
+var owned_armors := [0]    # Cloth
+var owned_boots := [0]     # Bare Feet
+
+# Consumables (distinct from equipment): id -> {name, qty, heal}.
+var consumables := {
+	"health_potion": {"name": "Health Potion", "qty": 2, "heal": 40},
+}
+
+# Progression: a flat skill-point reward per boss kill (no XP curve yet).
+var level := 1
+var skill_points := 0
+const SP_PER_BOSS := 2
+
+# Skills: an ability is usable when unlocked; rank (0..max_rank) improves its
+# tied formula (applied in Main._apply_skill_effects). "light" is always-on and
+# reference-only (max_rank 0); "heavy" starts locked.
+var skills := {
+	"light":  {"name": "Light Combo", "key": "LMB", "desc": "Weapon light-attack combo.", "unlocked": true, "rank": 0, "max_rank": 0, "cost": 0},
+	"heavy":  {"name": "Heavy Strike", "key": "RMB", "desc": "Slow, hard hit. +0.15 mult / rank.", "unlocked": false, "rank": 0, "max_rank": 3, "cost": 1},
+	"kick":   {"name": "Kick", "key": "F", "desc": "Boots damage + knockback. Scales / rank.", "unlocked": true, "rank": 0, "max_rank": 3, "cost": 1},
+	"dodge":  {"name": "Dodge Roll", "key": "Space", "desc": "Dash with i-frames. Longer / rank.", "unlocked": true, "rank": 0, "max_rank": 3, "cost": 1},
+	"block":  {"name": "Block / Parry", "key": "Q", "desc": "Reduce incoming damage. Better / rank.", "unlocked": true, "rank": 0, "max_rank": 3, "cost": 1},
+	"ranged": {"name": "Bow Shot", "key": "MMB", "desc": "Kinetic arrow. Faster launch / rank.", "unlocked": true, "rank": 0, "max_rank": 3, "cost": 1},
+}
+
 
 func current() -> Dictionary:
 	return characters[clampi(selected, 0, characters.size() - 1)]
@@ -64,3 +93,106 @@ func armor_data() -> Dictionary:
 
 func boots_data() -> Dictionary:
 	return boots[clampi(boot, 0, boots.size() - 1)]
+
+
+# --- Inventory / progression helpers ----------------------------------------
+func owns_weapon(i: int) -> bool:
+	return owned_weapons.has(i)
+
+
+func owns_armor(i: int) -> bool:
+	return owned_armors.has(i)
+
+
+func owns_boots(i: int) -> bool:
+	return owned_boots.has(i)
+
+
+func add_gear(kind: String, idx: int) -> void:
+	match kind:
+		"weapon":
+			if not owned_weapons.has(idx):
+				owned_weapons.append(idx)
+		"armor":
+			if not owned_armors.has(idx):
+				owned_armors.append(idx)
+		"boots":
+			if not owned_boots.has(idx):
+				owned_boots.append(idx)
+
+
+func gear_name(kind: String, idx: int) -> String:
+	match kind:
+		"weapon":
+			return String(weapons[clampi(idx, 0, weapons.size() - 1)].get("name", "?"))
+		"armor":
+			return String(armors[clampi(idx, 0, armors.size() - 1)].get("name", "?"))
+		"boots":
+			return String(boots[clampi(idx, 0, boots.size() - 1)].get("name", "?"))
+	return "?"
+
+
+func add_consumable(id: String, n: int) -> void:
+	if consumables.has(id):
+		consumables[id]["qty"] = int(consumables[id]["qty"]) + n
+
+
+# Consume one charge; returns the heal amount if used, else 0.
+func use_consumable(id: String) -> int:
+	if consumables.has(id) and int(consumables[id]["qty"]) > 0:
+		consumables[id]["qty"] = int(consumables[id]["qty"]) - 1
+		return int(consumables[id].get("heal", 0))
+	return 0
+
+
+# Can the player unlock (if locked) or rank up (if not maxed) this skill?
+func can_afford(id: String) -> bool:
+	if not skills.has(id):
+		return false
+	var s: Dictionary = skills[id]
+	if not bool(s["unlocked"]):
+		return skill_points >= int(s["cost"])
+	if int(s["rank"]) < int(s["max_rank"]):
+		return skill_points >= int(s["cost"])
+	return false
+
+
+# Spend points to unlock a locked skill, or rank up an unlocked one.
+func unlock_or_rank(id: String) -> bool:
+	if not can_afford(id):
+		return false
+	var s: Dictionary = skills[id]
+	skill_points -= int(s["cost"])
+	if not bool(s["unlocked"]):
+		s["unlocked"] = true
+	else:
+		s["rank"] = int(s["rank"]) + 1
+	return true
+
+
+func grant_boss_reward() -> void:
+	level += 1
+	skill_points += SP_PER_BOSS
+
+
+# ~60% chance to drop an unowned gear piece; otherwise a Health Potion.
+func roll_loot() -> Dictionary:
+	var pools := [["weapon", weapons.size(), owned_weapons], ["armor", armors.size(), owned_armors], ["boots", boots.size(), owned_boots]]
+	pools.shuffle()
+	for p in pools:
+		var owned: Array = p[2]
+		var unowned: Array = []
+		for i in range(int(p[1])):
+			if not owned.has(i):
+				unowned.append(i)
+		if unowned.size() > 0 and randf() < 0.6:
+			var idx: int = unowned[randi() % unowned.size()]
+			add_gear(String(p[0]), idx)
+			return {"kind": String(p[0]), "index": idx, "name": gear_name(String(p[0]), idx)}
+	add_consumable("health_potion", 1)
+	return {"kind": "consumable", "id": "health_potion", "name": "Health Potion"}
+
+
+# Persist a stat edit into the active character (survives respawn/scene reload).
+func set_character_stat(field: String, value: int) -> void:
+	characters[clampi(selected, 0, characters.size() - 1)][field] = value
