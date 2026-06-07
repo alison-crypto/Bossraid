@@ -7,6 +7,7 @@
 # Controls: WASD move, mouse look (click to capture / Esc release), Shift sprint,
 # Space jump, Left-click melee, Right-click ranged.
 
+class_name Main
 extends Node3D
 
 const WALK := 4.5
@@ -108,6 +109,15 @@ var player_def := 0 # total = base + equipped armor; subtracts from incoming dam
 var player_boots_dmg := 0 # total = base + equipped boots; flat damage on the kick
 var player_def_base := 0 # character's innate defence (before equipment)
 var player_boots_base := 0 # character's innate kick damage (before equipment)
+# Skill-driven combat tunables: base = the consts above; rebuilt from
+# GameState.skills ranks by _apply_skill_effects(). Formulas read these vars.
+var heavy_mult := HEAVY_BASE_MULT
+var kick_scale := 1.0
+var kick_knock := KICK_KNOCKBACK
+var dodge_iframes := DODGE_IFRAMES
+var block_reduction := BLOCK_REDUCTION
+var parry_window := PARRY_WINDOW
+var ranged_v_bonus := 0.0
 var player_max := PLAYER_MAX
 var player_hp := PLAYER_MAX
 var player_invuln := 0.0
@@ -144,6 +154,8 @@ var slam_target := Vector3.ZERO
 # Attacks
 var melee_cd := 0.0
 var attack_hit_t := -1.0 # >=0 while a swing is mid-flight, fires the hit at impact
+var locked_clip := ""    # the clip the current swing is locked on (released on its finish)
+var anim_lock_t := 0.0   # safety timeout: force-release the swing lock if the finish never fires
 var ranged_cd := 0.0
 var projectiles: Array = []
 
@@ -153,6 +165,8 @@ var hud_boss_fill: ColorRect
 var hud_banner: Label
 var hud_weapon: Label
 var hud_gear: Label
+var hud_hint: Label
+var menu: GameMenu
 
 
 func _ready() -> void:
@@ -163,6 +177,9 @@ func _ready() -> void:
 	_build_boss(boss_pos)
 	_build_player(player_spawn)
 	_build_hud()
+	menu = GameMenu.new()
+	menu.main = self
+	add_child(menu)
 
 
 func _build_environment() -> void:
@@ -296,6 +313,7 @@ func _build_player(pos: Vector3) -> void:
 	player_def_base = int(entry.get("def", 0))
 	player_boots_base = int(entry.get("boots", 0))
 	_apply_equipment() # sets player_def / player_boots_dmg from base + equipped gear
+	_apply_skill_effects() # sets combat tunables from skill ranks
 	player_max = max(1.0, float(player_con) * float(player_str) * HEALTH_K)
 	player_hp = player_max
 	print("Bossraid stats: STR=%d DEX=%d CON=%d DEF=%d (%s) boots=%s -> HP=%.0f force=%.2f (light w/50dmg=%.0f)" % [player_str, player_dex, player_con, player_def, String(GameState.armor_data().get("name", "Cloth")), String(GameState.boots_data().get("name", "Bare Feet")), player_max, _force_base(), _force_base() + 50.0])
@@ -369,6 +387,14 @@ func _build_hud() -> void:
 	hud_gear.add_theme_font_size_override("font_size", 16)
 	root.add_child(hud_gear)
 	_update_gear_hud()
+
+	# Window hint (bottom-left, above the gear line).
+	hud_hint = Label.new()
+	hud_hint.position = Vector2(24, 612)
+	hud_hint.add_theme_font_size_override("font_size", 16)
+	hud_hint.modulate = Color(0.8, 0.85, 0.95)
+	hud_hint.text = "[C] Stats   [I] Inventory   [K] Skills"
+	root.add_child(hud_hint)
 
 
 func _rect(c: Color, pos: Vector2, sz: Vector2) -> ColorRect:
@@ -460,9 +486,12 @@ func _boss_play(anim_name: String) -> void:
 
 
 func _on_anim_finished(finished_name) -> void:
-	var n := String(finished_name)
-	if n in [attack_anim, attack_anim2, heavy_anim, kick_anim, "Stab", "Bow"]:
+	# Release the swing lock when the clip it locked on finishes (robust to any
+	# clip name, vs. a hardcoded list that could deadlock on an unlisted clip).
+	if locked_clip != "" and String(finished_name) == locked_clip:
 		attacking = false
+		locked_clip = ""
+		anim_lock_t = 0.0
 		cur_anim = "" # let _physics_process resume idle/run
 
 
@@ -552,6 +581,81 @@ func _apply_equipment() -> void:
 	_update_gear_hud()
 
 
+# --- Menu-driven commands (equip gating, stat edit, consumables, skills) -----
+# Equip only if the item is owned (inventory gating). Refresh the menu if open.
+func equip_weapon_owned(i: int) -> void:
+	if GameState.owns_weapon(i):
+		_equip_weapon(i)
+		if menu:
+			menu.refresh()
+
+
+func equip_armor_owned(i: int) -> void:
+	if GameState.owns_armor(i):
+		_equip_armor(i)
+		if menu:
+			menu.refresh()
+
+
+func equip_boots_owned(i: int) -> void:
+	if GameState.owns_boots(i):
+		_equip_boots(i)
+		if menu:
+			menu.refresh()
+
+
+# Next owned index in a category, wrapping (for Tab/R/T cycling).
+func _cycle_owned(owned: Array, cur: int) -> int:
+	if owned.is_empty():
+		return cur
+	var sorted: Array = owned.duplicate()
+	sorted.sort()
+	var idx := sorted.find(cur)
+	return int(sorted[(idx + 1) % sorted.size()]) if idx >= 0 else int(sorted[0])
+
+
+# Free stat tuning from the Stats window: clamp >=1, persist, recompute HP.
+func _set_stat(stat: String, delta: int) -> void:
+	var cur := player_str
+	match stat:
+		"dex":
+			cur = player_dex
+		"con":
+			cur = player_con
+	var nv: int = max(1, cur + delta)
+	match stat:
+		"str":
+			player_str = nv
+		"dex":
+			player_dex = nv
+		"con":
+			player_con = nv
+	GameState.set_character_stat(stat, nv)
+	player_max = max(1.0, float(player_con) * float(player_str) * HEALTH_K)
+	player_hp = min(player_hp, player_max)
+	_update_hud()
+	if menu:
+		menu.refresh()
+
+
+# Use a consumable (e.g. heal). No-op if none left.
+func use_consumable(id: String) -> void:
+	var heal: int = GameState.use_consumable(id)
+	if heal > 0:
+		player_hp = min(player_max, player_hp + float(heal))
+		_update_hud()
+	if menu:
+		menu.refresh()
+
+
+# Spend a skill point to unlock/rank a skill, then reapply its runtime effect.
+func skill_upgrade(id: String) -> void:
+	if GameState.unlock_or_rank(id):
+		_apply_skill_effects()
+		if menu:
+			menu.refresh()
+
+
 func _play(anim_name: String) -> void:
 	if anim and anim_name != "" and cur_anim != anim_name and anim.has_animation(anim_name):
 		anim.play(anim_name, 0.2)
@@ -574,13 +678,13 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F:
 		_do_kick()
 	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_TAB:
-		_equip_weapon((GameState.weapon + 1) % GameState.weapons.size())
+		equip_weapon_owned(_cycle_owned(GameState.owned_weapons, GameState.weapon))
 	elif event is InputEventKey and event.pressed and not event.echo and event.keycode >= KEY_1 and event.keycode <= KEY_6:
-		_equip_weapon(event.keycode - KEY_1)
+		equip_weapon_owned(event.keycode - KEY_1)
 	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_R:
-		_equip_armor((GameState.armor + 1) % GameState.armors.size())
+		equip_armor_owned(_cycle_owned(GameState.owned_armors, GameState.armor))
 	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_T:
-		_equip_boots((GameState.boot + 1) % GameState.boots.size())
+		equip_boots_owned(_cycle_owned(GameState.owned_boots, GameState.boot))
 	elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
@@ -617,8 +721,11 @@ func _physics_process(delta: float) -> void:
 	aiming = Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE) and not dodging and not player_dead
 	cam.position = cam.position.lerp(Vector3(0.6, 0.05, 2.3) if aiming else cam_rest, 0.2)
 
-	# Block (hold Q): can't block mid-swing/dodge/aim. block_t feeds the parry window.
-	var want_block := Input.is_physical_key_pressed(KEY_Q) and not attacking and not dodging and not aiming and not player_dead
+	# Block (hold Q): raising guard cancels an in-progress swing (active-frames
+	# rule). Can't block mid-dodge/aim. block_t feeds the parry window.
+	var want_block := Input.is_physical_key_pressed(KEY_Q) and not dodging and not aiming and not player_dead
+	if want_block and attacking:
+		_cancel_swing()
 	if want_block and not blocking:
 		block_t = 0.0
 	blocking = want_block
@@ -727,12 +834,12 @@ func _damage_player(dmg: int) -> void:
 	if player_invuln > 0.0 or player_dead:
 		return
 	if blocking:
-		if block_t <= PARRY_WINDOW:
+		if block_t <= parry_window:
 			# Parry: a hit caught just as you raise guard — fully negated, boss reels.
 			boss_flash = 0.25
 			player_invuln = 0.4
 			return
-		dmg = int(round(dmg * BLOCK_REDUCTION)) # blocked: chip damage only
+		dmg = int(round(dmg * block_reduction)) # blocked: chip damage only
 	var taken: int = max(0, dmg - player_def) # equipment defence subtracts directly
 	player_hp = max(0.0, player_hp - taken)
 	player_invuln = 0.7
@@ -764,7 +871,11 @@ func _boss_die() -> void:
 	boss_dead = true
 	boss_root.visible = false
 	slam_ring.visible = false
-	_banner("VICTORY!")
+	GameState.grant_boss_reward()
+	var drop: Dictionary = GameState.roll_loot()
+	_banner("VICTORY!   LOOT: %s   (+%d SP)" % [String(drop.get("name", "?")), GameState.SP_PER_BOSS])
+	if menu:
+		menu.refresh()
 	await get_tree().create_timer(2.5).timeout
 	boss_hp = BOSS_MAX
 	boss_dead = false
@@ -804,6 +915,8 @@ func _do_heavy() -> void:
 	if w.get("ranged", false):
 		_do_ranged()
 		return
+	if not bool(GameState.skills["heavy"]["unlocked"]):
+		return # Heavy Strike must be unlocked in the Skills window
 	var clip := String(w.get("heavy", heavy_anim))
 	if clip == "" or anim == null or not anim.has_animation(clip):
 		return
@@ -811,12 +924,15 @@ func _do_heavy() -> void:
 	_start_swing(clip, HEAVY_SPEED * float(w.get("speed", 1.0)))
 
 
-# F: a quick kick that pokes (boots damage) and knocks the boss back.
+# F: a quick kick that pokes (boots damage) and knocks the boss back. A kick can
+# cancel an in-progress swing (active-frames rule applies via _cancel_swing).
 func _do_kick() -> void:
-	if player_dead or attacking or dodging or blocking:
+	if player_dead or dodging or blocking:
 		return
 	if kick_anim == "" or anim == null or not anim.has_animation(kick_anim):
 		return
+	if attacking:
+		_cancel_swing()
 	attack_kind = "kick"
 	_start_swing(kick_anim, ATTACK_SPEED)
 
@@ -828,26 +944,81 @@ func _force_base() -> float:
 
 # Melee damage for the current swing (light/heavy/kick) per the owner's formulas.
 func _attack_damage() -> int:
-	var base := _force_base()
-	var wdmg := float(GameState.weapon_data().get("damage", 0))
-	var dmg := base + wdmg
 	match attack_kind:
 		"heavy":
-			dmg = (base + wdmg) * (HEAVY_BASE_MULT + HEAVY_STR_STEP * floor(player_str / 10.0))
+			return _heavy_damage()
 		"kick":
-			dmg = base + float(player_boots_dmg)
-	return int(round(max(1.0, dmg)))
+			return _kick_damage()
+	return _light_damage()
+
+
+# --- Damage previews (shared by combat AND the menu, so shown == actual) -----
+func _light_damage() -> int:
+	var base := _force_base()
+	var wdmg := float(GameState.weapon_data().get("damage", 0))
+	return int(round(max(1.0, base + wdmg)))
+
+
+func _heavy_damage() -> int:
+	var base := _force_base()
+	var wdmg := float(GameState.weapon_data().get("damage", 0))
+	var mult := heavy_mult + HEAVY_STR_STEP * floor(player_str / 10.0)
+	return int(round(max(1.0, (base + wdmg) * mult)))
+
+
+func _kick_damage() -> int:
+	return int(round(max(1.0, _force_base() + float(player_boots_dmg) * kick_scale)))
+
+
+func _arrow_mass() -> float:
+	return AMMO_MASS + float(player_str) * MASS_PER_STR
+
+
+func _arrow_v0() -> float:
+	return BOW_BASE_V + float(player_dex) * V_PER_DEX + ranged_v_bonus
+
+
+func _swing_time(clip: String, speed: float) -> float:
+	if anim == null or not anim.has_animation(clip):
+		return 0.0
+	var clip_len: float = anim.get_animation(clip).length
+	var t: float = max(0.15, clip_len / speed - float(player_dex) * DEX_ANIM_PER_PT)
+	return t
+
+
+# Map skill unlock/rank into the runtime combat tunables the formulas read.
+func _apply_skill_effects() -> void:
+	var sk: Dictionary = GameState.skills
+	heavy_mult = HEAVY_BASE_MULT + 0.15 * int(sk["heavy"]["rank"])
+	kick_scale = 1.0 + 0.25 * int(sk["kick"]["rank"])
+	kick_knock = KICK_KNOCKBACK * (1.0 + 0.2 * int(sk["kick"]["rank"]))
+	dodge_iframes = DODGE_IFRAMES + 0.1 * int(sk["dodge"]["rank"])
+	block_reduction = max(0.0, BLOCK_REDUCTION - 0.04 * int(sk["block"]["rank"]))
+	parry_window = PARRY_WINDOW + 0.05 * int(sk["block"]["rank"])
+	ranged_v_bonus = 3.0 * int(sk["ranged"]["rank"])
 
 
 # Play a one-shot attack clip and schedule its hit at the impact point. DEX
 # shortens the swing (faster attacks) by DEX_ANIM_PER_PT seconds per point.
 func _start_swing(clip: String, speed: float) -> void:
 	attacking = true
+	locked_clip = clip
 	var clip_len: float = anim.get_animation(clip).length
-	var swing: float = max(0.15, clip_len / speed - float(player_dex) * DEX_ANIM_PER_PT)
+	var swing: float = _swing_time(clip, speed)
 	anim.play(clip, 0.1, clip_len / swing)
 	cur_anim = clip
 	attack_hit_t = max(0.05, swing * ATTACK_IMPACT)
+	anim_lock_t = swing + 0.15 # safety: release even if animation_finished never fires
+
+
+# Cancel the current swing (dodge/kick/block/bow). Active-frames rule: a hit that
+# already landed (impact passed) stands; a pre-impact swing whiffs (drop the hit).
+func _cancel_swing() -> void:
+	if attack_hit_t > 0.0:
+		attack_hit_t = -1.0 # pre-impact: no damage
+	attacking = false
+	locked_clip = ""
+	anim_lock_t = 0.0
 
 
 # Quick evade (Space): dash in the move direction (or facing if idle) with a
@@ -873,9 +1044,8 @@ func _do_dodge() -> void:
 	dodge_dir = d.normalized() if d.length() > 0.1 else fwd
 	dodging = true
 	dodge_t = DODGE_TIME
-	attacking = false # cancel any swing
-	attack_hit_t = -1.0
-	player_invuln = max(player_invuln, DODGE_IFRAMES)
+	_cancel_swing() # dodge cancels any swing (active-frames rule)
+	player_invuln = max(player_invuln, dodge_iframes)
 	if dodge_anim != "" and anim and anim.has_animation(dodge_anim):
 		anim.play(dodge_anim, 0.05)
 		cur_anim = dodge_anim
@@ -897,7 +1067,7 @@ func _apply_melee_hit() -> void:
 		if tb.length() < MELEE_RANGE + 2.2 and td_dot(tb, aim) > 0.0:
 			_hit_boss(dmg)
 			if attack_kind == "kick":
-				boss_root.global_position += tb.normalized() * KICK_KNOCKBACK * 0.2
+				boss_root.global_position += tb.normalized() * kick_knock * 0.2
 
 
 func td_dot(v: Vector3, aim: Vector3) -> float:
@@ -909,10 +1079,12 @@ func td_dot(v: Vector3, aim: Vector3) -> float:
 func _do_ranged() -> void:
 	if ranged_cd > 0.0 or player_dead:
 		return
+	if attacking:
+		_cancel_swing() # a shot cancels an in-progress swing
 	ranged_cd = RANGED_CD
-	# Arrow physics: mass from STR (draw weight), launch speed from DEX.
-	var mass := AMMO_MASS + float(player_str) * MASS_PER_STR
-	var v0 := BOW_BASE_V + float(player_dex) * V_PER_DEX
+	# Arrow physics: mass from STR (draw weight), launch speed from DEX (+ skill).
+	var mass := _arrow_mass()
+	var v0 := _arrow_v0()
 	var bolt := MeshInstance3D.new()
 	var sm := SphereMesh.new()
 	sm.radius = 0.12
@@ -939,6 +1111,14 @@ func _update_combat(delta: float) -> void:
 		if attack_hit_t <= 0.0:
 			attack_hit_t = -1.0
 			_apply_melee_hit()
+
+	# Safety: force-release the swing lock if animation_finished never arrives.
+	if attacking and anim_lock_t > 0.0:
+		anim_lock_t -= delta
+		if anim_lock_t <= 0.0:
+			attacking = false
+			locked_clip = ""
+			cur_anim = ""
 
 	var dcenter := dummy_pos + Vector3(0, 1.0, 0)
 	var bcenter := boss_root.global_position + Vector3(0, 2.0, 0) if boss_root else Vector3.ZERO
