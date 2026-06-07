@@ -22,6 +22,11 @@ const PROJ_SPEED := 24.0
 # rig-dependent. Default: stand the blade up out of the fist.
 const WEAPON_EULER := Vector3(-90, 0, 0)
 const WEAPON_OFFSET := Vector3(0, 0.55, 0)
+# Melee pacing: the swing clip plays at ATTACK_SPEED (higher = snappier), you
+# can't swing again until it finishes (one hit per swing), and the hit lands
+# ATTACK_IMPACT of the way through — so damage is synced to the sword.
+const ATTACK_SPEED := 1.4
+const ATTACK_IMPACT := 0.4
 
 const PLAYER_MAX := 100.0
 const BOSS_MAX := 400.0
@@ -83,6 +88,7 @@ var slam_target := Vector3.ZERO
 
 # Attacks
 var melee_cd := 0.0
+var attack_hit_t := -1.0 # >=0 while a swing is mid-flight, fires the hit at impact
 var ranged_cd := 0.0
 var projectiles: Array = []
 
@@ -582,23 +588,30 @@ func _boss_die() -> void:
 
 # --- Player attacks ---------------------------------------------------------
 func _do_melee() -> void:
-	if melee_cd > 0.0 or player_dead:
+	# One swing at a time: can't re-attack until the current swing finishes.
+	if player_dead or attacking or melee_cd > 0.0:
 		return
-	melee_cd = 0.45
-	# Play the attack animation (if the character has one), once.
-	if attack_anim != "" and anim:
+	if attack_anim != "" and anim and anim.has_animation(attack_anim):
 		attacking = true
-		anim.play(attack_anim, 0.1)
+		anim.play(attack_anim, 0.1, ATTACK_SPEED)
 		cur_anim = attack_anim
+		var swing: float = anim.get_animation(attack_anim).length / ATTACK_SPEED
+		attack_hit_t = max(0.05, swing * ATTACK_IMPACT) # land the hit at impact
+	else:
+		# No swing clip: fall back to an instant hit on a fixed cooldown.
+		melee_cd = 0.45
+		_apply_melee_hit()
+
+
+# Resolve a melee swing's hit (dummy + boss) using the current aim direction.
+func _apply_melee_hit() -> void:
 	var aim := -cam_yaw.global_transform.basis.z
 	aim.y = 0
 	aim = aim.normalized()
-	# Dummy
 	var td := dummy_pos - player.global_position
 	td.y = 0
 	if td.length() < MELEE_RANGE + 0.5 and td.normalized().dot(aim) > 0.2:
 		_hit_dummy(randi_range(45, 65))
-	# Boss (bigger reach because it's large)
 	if not boss_dead:
 		var tb := boss_root.global_position - player.global_position
 		tb.y = 0
@@ -635,6 +648,13 @@ func _do_ranged() -> void:
 func _update_combat(delta: float) -> void:
 	melee_cd = max(0.0, melee_cd - delta)
 	ranged_cd = max(0.0, ranged_cd - delta)
+
+	# Land the melee hit at the swing's impact point (synced to the animation).
+	if attack_hit_t >= 0.0:
+		attack_hit_t -= delta
+		if attack_hit_t <= 0.0:
+			attack_hit_t = -1.0
+			_apply_melee_hit()
 
 	var dcenter := dummy_pos + Vector3(0, 1.0, 0)
 	var bcenter := boss_root.global_position + Vector3(0, 2.0, 0) if boss_root else Vector3.ZERO
