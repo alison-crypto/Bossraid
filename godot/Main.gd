@@ -27,6 +27,10 @@ const WEAPON_OFFSET := Vector3(0, 0.55, 0)
 # ATTACK_IMPACT of the way through — so damage is synced to the sword.
 const ATTACK_SPEED := 1.4
 const ATTACK_IMPACT := 0.4
+# Dodge roll (Space): a quick burst in the move/facing direction with i-frames.
+const DODGE_SPEED := 11.0
+const DODGE_TIME := 0.45
+const DODGE_IFRAMES := 0.5
 
 const PLAYER_MAX := 100.0
 const BOSS_MAX := 400.0
@@ -44,8 +48,14 @@ var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9
 var cur_anim := ""
 var idle_anim := ""
 var run_anim := ""
-var attack_anim := ""
+var attack_anim := ""   # first combo swing (outward slash)
+var attack_anim2 := ""  # second combo swing (inward slash)
+var dodge_anim := ""
+var combo_i := 0
 var attacking := false
+var dodging := false
+var dodge_t := 0.0
+var dodge_dir := Vector3.FORWARD
 var face_flip := true
 var skel: Skeleton3D
 var weapon: MeshInstance3D
@@ -322,13 +332,16 @@ func _setup_animation() -> void:
 		var m_idle := AnimUtil.merge(anim, skel, "res://models/anim/idle.glb", "FightIdle")
 		var m_run := AnimUtil.merge(anim, skel, "res://models/anim/run.glb", "RunSword")
 		var m_slash := AnimUtil.merge(anim, skel, "res://models/anim/slash.glb", "Slash")
+		var m_slash2 := AnimUtil.merge(anim, skel, "res://models/anim/inslash.glb", "SlashB")
+		dodge_anim = AnimUtil.merge(anim, skel, "res://models/anim/dodge.glb", "Dodge")
 		if idle_anim == "" and m_idle != "":
 			idle_anim = m_idle
 		if run_anim == "" and m_run != "":
 			run_anim = m_run
 		if m_slash != "":
 			attack_anim = m_slash
-		print("Bossraid: merged idle=", m_idle, " run=", m_run, " slash=", m_slash)
+		attack_anim2 = m_slash2 if m_slash2 != "" else attack_anim
+		print("Bossraid: merged idle=", m_idle, " run=", m_run, " slash=", m_slash, " slashB=", m_slash2, " dodge=", dodge_anim)
 	if idle_anim == "" and list.size() > 0:
 		idle_anim = list[0]
 	if run_anim == "":
@@ -338,6 +351,8 @@ func _setup_animation() -> void:
 	_set_loop(idle_anim, true)
 	_set_loop(run_anim, true)
 	_set_loop(attack_anim, false) # one-shot
+	_set_loop(attack_anim2, false)
+	_set_loop(dodge_anim, false)
 	anim.animation_finished.connect(_on_anim_finished)
 	if idle_anim != "":
 		anim.play(idle_anim)
@@ -363,7 +378,8 @@ func _boss_play(anim_name: String) -> void:
 
 
 func _on_anim_finished(finished_name) -> void:
-	if String(finished_name) == attack_anim:
+	var n := String(finished_name)
+	if n == attack_anim or n == attack_anim2:
 		attacking = false
 		cur_anim = "" # let _physics_process resume idle/run
 
@@ -424,6 +440,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_do_melee()
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			_do_ranged()
+	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_SPACE:
+		_do_dodge()
 	elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
@@ -457,24 +475,29 @@ func _physics_process(delta: float) -> void:
 	dir = dir.normalized()
 
 	var speed := SPRINT if Input.is_physical_key_pressed(KEY_SHIFT) else WALK
-	player.velocity.x = dir.x * speed
-	player.velocity.z = dir.z * speed
+	if dodging:
+		dodge_t -= delta
+		player.velocity.x = dodge_dir.x * DODGE_SPEED
+		player.velocity.z = dodge_dir.z * DODGE_SPEED
+		if dodge_t <= 0.0:
+			dodging = false
+	else:
+		player.velocity.x = dir.x * speed
+		player.velocity.z = dir.z * speed
 	if not player.is_on_floor():
 		player.velocity.y -= gravity * delta
-	elif Input.is_physical_key_pressed(KEY_SPACE) and not player_dead:
-		player.velocity.y = JUMP
 	player.move_and_slide()
 
 	# Face the model toward movement; when idle, face where the camera looks (so
 	# the character keeps its back to the camera instead of snapping to its rest
 	# orientation). face_flip aligns the model's forward with this (rig-dependent).
 	if model:
-		var face_dir := dir if dir.length() > 0.1 else fwd
+		var face_dir := dodge_dir if dodging else (dir if dir.length() > 0.1 else fwd)
 		var target := atan2(face_dir.x, face_dir.z) + (PI if face_flip else 0.0)
 		model_facing = lerp_angle(model_facing, target, 0.2)
 		model.rotation.y = model_facing
-	# Locomotion animation (suppressed while an attack animation is playing).
-	if not attacking:
+	# Locomotion animation (suppressed while attacking or dodging).
+	if not attacking and not dodging:
 		_play(run_anim if dir.length() > 0.1 else idle_anim)
 
 	# Size the held weapon to ~world scale (the hand bone may be heavily scaled).
@@ -589,18 +612,52 @@ func _boss_die() -> void:
 # --- Player attacks ---------------------------------------------------------
 func _do_melee() -> void:
 	# One swing at a time: can't re-attack until the current swing finishes.
-	if player_dead or attacking or melee_cd > 0.0:
+	if player_dead or attacking or dodging or melee_cd > 0.0:
 		return
-	if attack_anim != "" and anim and anim.has_animation(attack_anim):
+	# Alternate outward/inward slash so repeated clicks read as a combo.
+	var clip := attack_anim if combo_i % 2 == 0 else attack_anim2
+	combo_i += 1
+	if clip != "" and anim and anim.has_animation(clip):
 		attacking = true
-		anim.play(attack_anim, 0.1, ATTACK_SPEED)
-		cur_anim = attack_anim
-		var swing: float = anim.get_animation(attack_anim).length / ATTACK_SPEED
+		anim.play(clip, 0.1, ATTACK_SPEED)
+		cur_anim = clip
+		var swing: float = anim.get_animation(clip).length / ATTACK_SPEED
 		attack_hit_t = max(0.05, swing * ATTACK_IMPACT) # land the hit at impact
 	else:
 		# No swing clip: fall back to an instant hit on a fixed cooldown.
 		melee_cd = 0.45
 		_apply_melee_hit()
+
+
+# Quick evade (Space): dash in the move direction (or facing if idle) with a
+# short window of invulnerability (i-frames), cancelling any swing.
+func _do_dodge() -> void:
+	if player_dead or dodging or not player.is_on_floor():
+		return
+	var fwd := -cam_yaw.global_transform.basis.z
+	var rgt := cam_yaw.global_transform.basis.x
+	fwd.y = 0
+	rgt.y = 0
+	fwd = fwd.normalized()
+	rgt = rgt.normalized()
+	var d := Vector3.ZERO
+	if Input.is_physical_key_pressed(KEY_W):
+		d += fwd
+	if Input.is_physical_key_pressed(KEY_S):
+		d -= fwd
+	if Input.is_physical_key_pressed(KEY_D):
+		d += rgt
+	if Input.is_physical_key_pressed(KEY_A):
+		d -= rgt
+	dodge_dir = d.normalized() if d.length() > 0.1 else fwd
+	dodging = true
+	dodge_t = DODGE_TIME
+	attacking = false # cancel any swing
+	attack_hit_t = -1.0
+	player_invuln = max(player_invuln, DODGE_IFRAMES)
+	if dodge_anim != "" and anim and anim.has_animation(dodge_anim):
+		anim.play(dodge_anim, 0.05)
+		cur_anim = dodge_anim
 
 
 # Resolve a melee swing's hit (dummy + boss) using the current aim direction.
