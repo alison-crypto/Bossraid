@@ -1005,7 +1005,12 @@ func _start_swing(clip: String, speed: float) -> void:
 	locked_clip = clip
 	var clip_len: float = anim.get_animation(clip).length
 	var swing: float = _swing_time(clip, speed)
-	anim.play(clip, 0.1, clip_len / swing)
+	# The crossfade out of idle must finish BEFORE the impact, or a fast (high-DEX)
+	# swing lands its hit while the swing is still blending in — looking like the
+	# hit precedes the animation. Keep the blend well under the pre-impact window
+	# (impact is at swing*ATTACK_IMPACT), and scale it with the swing length.
+	var blend: float = min(0.08, swing * ATTACK_IMPACT * 0.5)
+	anim.play(clip, blend, clip_len / swing)
 	cur_anim = clip
 	attack_hit_t = max(0.05, swing * ATTACK_IMPACT)
 	anim_lock_t = swing + 0.15 # safety: release even if animation_finished never fires
