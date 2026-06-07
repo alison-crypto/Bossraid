@@ -492,7 +492,7 @@ function playAttackAnim() {
 
 // --- Tunable parameters (live-editable via the on-screen panel) -------------
 // Persisted to localStorage so your adjustments survive a reload.
-const TUNE_KEY = 'bossraid.tune.v1';
+const TUNE_KEY = 'bossraid.tune.v2'; // v2: reset stale camera values to good defaults
 const tune = Object.assign(
   { scale: 0.6, camDist: 3.2, eyeH: 2.65, shoulder: 1.05, fov: 77, yaw: 180,
     wpx: 0, wpy: 0, wpz: 0.05, wrx: 0, wry: 0, wscale: 0.8 },
