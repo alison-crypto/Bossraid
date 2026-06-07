@@ -21,13 +21,10 @@ const canvas = document.getElementById('c');
 const hint = document.getElementById('hint');
 const reticle = document.getElementById('reticle');
 
-// --- Room dimensions --------------------------------------------------------
-const HALF_W = 12; // playable half-width in X (inside the walls)
-const Z_MIN = -22; // far wall (behind the throne)
-const Z_MAX = 22; // entrance wall
-const WALL_H = 15;
-const ROOM_W = 26; // visual wall span
-const ROOM_L = 46;
+// --- Arena dimensions (open test map, real-world metres) --------------------
+const HALF_W = 45; // open play area half-extent
+const Z_MIN = -45;
+const Z_MAX = 45;
 
 // --- Renderer / scene -------------------------------------------------------
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -36,237 +33,90 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0b12);
-scene.fog = new THREE.Fog(0x0a0b12, 26, 70);
+scene.background = new THREE.Color(0x9fb6d8); // open sky
+scene.fog = new THREE.Fog(0x9fb6d8, 70, 170);
 
-const camera = new THREE.PerspectiveCamera(74, 1, 0.05, 500);
+const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 1000);
 
-// --- Lighting ---------------------------------------------------------------
-scene.add(new THREE.HemisphereLight(0x4a5270, 0x101018, 0.55));
+// --- Lighting (open daylight) -----------------------------------------------
+scene.add(new THREE.HemisphereLight(0xbfd4f2, 0x586043, 1.0));
+const sun = new THREE.DirectionalLight(0xfff2da, 2.0);
+sun.position.set(24, 44, 18);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 140;
+sun.shadow.camera.left = -50;
+sun.shadow.camera.right = 50;
+sun.shadow.camera.top = 50;
+sun.shadow.camera.bottom = -50;
+scene.add(sun);
 
-const fill = new THREE.DirectionalLight(0x8090b0, 0.3);
-fill.position.set(6, 20, 14);
-scene.add(fill);
-
-function ceilingLamp(z, color, intensity) {
-  const lamp = new THREE.SpotLight(color, intensity, 75, Math.PI / 3.5, 0.5, 1.1);
-  lamp.position.set(0, WALL_H - 1, z);
-  lamp.target.position.set(0, 0, z);
-  lamp.castShadow = true;
-  lamp.shadow.mapSize.set(1024, 1024);
-  lamp.shadow.camera.near = 1;
-  lamp.shadow.camera.far = 40;
-  scene.add(lamp, lamp.target);
-  const bulb = new THREE.Mesh(
-    new THREE.SphereGeometry(0.7, 16, 16),
-    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 2 })
-  );
-  bulb.position.copy(lamp.position);
-  scene.add(bulb);
-}
-ceilingLamp(8, 0xfff0d0, 7);
-ceilingLamp(-17, 0xffe0c0, 6); // over the throne
-
-// --- Materials --------------------------------------------------------------
-const stone = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 });
-const darkStone = new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 1 });
-const marble = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7 });
-
-// CC0 PBR textures (ambientCG): walls = stone bricks, columns = marble,
-// throne/ceiling = rough rock. Loaded async and tiled; the knotwork floor
-// stays procedural.
-const texLoader = new THREE.TextureLoader();
-function loadPBR(dir, repeatX, repeatY) {
-  const color = texLoader.load(`./textures/${dir}/color.jpg`);
-  color.colorSpace = THREE.SRGBColorSpace;
-  const normal = texLoader.load(`./textures/${dir}/normal.jpg`);
-  const rough = texLoader.load(`./textures/${dir}/rough.jpg`);
-  for (const t of [color, normal, rough]) {
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(repeatX, repeatY);
-    t.anisotropy = 8;
-  }
-  return { color, normal, rough };
-}
-function applyPBR(mat, set) {
-  mat.map = set.color;
-  mat.normalMap = set.normal;
-  mat.roughnessMap = set.rough;
-  mat.needsUpdate = true;
-}
-applyPBR(stone, loadPBR('wall', 4, 3));
-applyPBR(darkStone, loadPBR('dark', 5, 5));
-applyPBR(marble, loadPBR('column', 2, 4));
-
-// --- Collision data ---------------------------------------------------------
-// Two kinds of solids, both height-aware: you're blocked on the sides only when
-// your feet are below the solid's top; if you're above it, you stand on it.
+// --- Collision data (height-aware solids) -----------------------------------
 const cylinders = []; // { x, z, r, top }
 const boxes = []; // { minX, maxX, minZ, maxZ, top }
-const STEP = 0.45; // step-up / landing tolerance
-
+const STEP = 0.45;
 function addBoxSolid(cx, cz, sx, sz, top) {
   boxes.push({ minX: cx - sx / 2, maxX: cx + sx / 2, minZ: cz - sz / 2, maxZ: cz + sz / 2, top });
 }
 
-// --- Floor (green base + purple knotwork runner) ----------------------------
-const floor = new THREE.Mesh(
-  new THREE.PlaneGeometry(ROOM_W, ROOM_L),
-  new THREE.MeshStandardMaterial({ map: makeKnotTexture(), roughness: 0.85 })
+// --- Open ground + reference grid -------------------------------------------
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(240, 240),
+  new THREE.MeshStandardMaterial({ color: 0x6f7d52, roughness: 1 })
 );
-floor.rotation.x = -Math.PI / 2;
-floor.receiveShadow = true;
-scene.add(floor);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+const grid = new THREE.GridHelper(160, 80, 0x3a4660, 0x32384a);
+grid.position.y = 0.02;
+scene.add(grid);
 
-// --- Walls + ceiling --------------------------------------------------------
-function wall(w, h, d, x, y, z, mat = stone) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-  m.position.set(x, y, z);
-  m.receiveShadow = true;
-  m.castShadow = true;
-  scene.add(m);
-}
-wall(1, WALL_H, ROOM_L, -ROOM_W / 2, WALL_H / 2, 0);
-wall(1, WALL_H, ROOM_L, ROOM_W / 2, WALL_H / 2, 0);
-wall(ROOM_W, WALL_H, 1, 0, WALL_H / 2, -ROOM_L / 2);
-wall(ROOM_W, WALL_H, 1, 0, WALL_H / 2, ROOM_L / 2);
-wall(ROOM_W, 1, ROOM_L, 0, WALL_H, 0, darkStone);
-
-// --- Stained-glass wall panels ----------------------------------------------
-const panelColors = [0xff4d8d, 0x4dd0ff, 0x8aff5a, 0xffc14d, 0xb060ff, 0xff6a4d];
-function addPanels(xFace, faceInwardY) {
-  for (let i = 0; i < 7; i++) {
-    const z = -16 + i * 5.3;
-    const c = panelColors[(i + (xFace < 0 ? 0 : 3)) % panelColors.length];
-    const panel = new THREE.Mesh(
-      new THREE.PlaneGeometry(3.2, 6),
-      new THREE.MeshStandardMaterial({
-        color: c,
-        emissive: c,
-        emissiveIntensity: 0.7,
-        roughness: 0.4,
-        side: THREE.DoubleSide,
-      })
-    );
-    panel.position.set(xFace, 7.5, z);
-    panel.rotation.y = faceInwardY;
-    scene.add(panel);
-  }
-}
-addPanels(-ROOM_W / 2 + 0.55, Math.PI / 2);
-addPanels(ROOM_W / 2 - 0.55, -Math.PI / 2);
-
-// --- Columns (tall: block, can't be climbed) --------------------------------
-const COL_R = 1.0;
-function addColumn(x, z) {
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(COL_R, COL_R, 12, 16), marble);
-  shaft.position.set(x, 6, z);
-  shaft.castShadow = true;
-  shaft.receiveShadow = true;
-  scene.add(shaft);
-  for (const y of [0.4, 11.6]) {
-    const cap = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.8, 2.6), darkStone);
-    cap.position.set(x, y, z);
-    cap.castShadow = true;
-    scene.add(cap);
-  }
-  cylinders.push({ x, z, r: COL_R + 0.4, top: 12 });
-}
-for (let i = 0; i < 7; i++) {
-  const z = -12 + i * 5.0;
-  addColumn(-8.5, z);
-  addColumn(8.5, z);
-}
-
-// --- Low cover blocks (climbable: jump on top) ------------------------------
-function addCoverBlock(x, z) {
-  const h = 1.1;
-  const m = new THREE.Mesh(new THREE.BoxGeometry(2.8, h, 2.8), stone);
+// A ring of tall stone pillars as landmarks (so movement reads + something to
+// collide with).
+const pillarMat = new THREE.MeshStandardMaterial({ color: 0x8a8f9c, roughness: 0.9 });
+function addPillar(x, z) {
+  const h = 9;
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1.0, h, 14), pillarMat);
   m.position.set(x, h / 2, z);
   m.castShadow = true;
   m.receiveShadow = true;
   scene.add(m);
-  const cap = new THREE.Mesh(
-    new THREE.BoxGeometry(2.9, 0.12, 2.9),
-    new THREE.MeshStandardMaterial({ color: 0x3a3d49, roughness: 0.9 })
-  );
-  cap.position.set(x, h + 0.06, z);
-  scene.add(cap);
-  addBoxSolid(x, z, 2.8, 2.8, h);
+  cylinders.push({ x, z, r: 1.2, top: h });
 }
-addCoverBlock(-5.5, 7);
-addCoverBlock(5.5, 2);
-addCoverBlock(-5.5, -3);
-addCoverBlock(5.5, -8);
+for (let i = 0; i < 8; i++) {
+  const a = (i / 8) * Math.PI * 2;
+  addPillar(Math.cos(a) * 22, Math.sin(a) * 22);
+}
 
-// --- Throne / dais (solid where the geometry is; dais is a climbable step) ---
-const dais = new THREE.Mesh(new THREE.BoxGeometry(16, 1.2, 7), stone);
-dais.position.set(0, 0.6, -18.5);
-dais.receiveShadow = true;
-dais.castShadow = true;
-scene.add(dais);
-addBoxSolid(0, -18.5, 16, 7, 1.2); // low step: walk up onto it
-
-const throneBack = new THREE.Mesh(new THREE.BoxGeometry(6, 7, 1.2), darkStone);
-throneBack.position.set(0, 4.5, -21);
-throneBack.castShadow = true;
-scene.add(throneBack);
-addBoxSolid(0, -21, 6, 1.2, 8); // tall: blocks
-
-const throneSeat = new THREE.Mesh(new THREE.BoxGeometry(6, 1.4, 3), darkStone);
-throneSeat.position.set(0, 2, -19.5);
-throneSeat.castShadow = true;
-scene.add(throneSeat);
-addBoxSolid(0, -19.5, 6, 3, 2.7);
-
-// --- Boss (Stone Golem) on the dais -----------------------------------------
-const boss = new THREE.Group();
-const bossBody = new THREE.Mesh(
-  new THREE.CylinderGeometry(2.6, 3.4, 6.5, 6),
-  new THREE.MeshStandardMaterial({ color: 0x8a6a55, roughness: 0.85, flatShading: true })
-);
-bossBody.position.y = 3.25;
-bossBody.castShadow = true;
-boss.add(bossBody);
-const bossCore = new THREE.Mesh(
-  new THREE.IcosahedronGeometry(1.1, 0),
-  new THREE.MeshStandardMaterial({ color: 0xff8a3a, emissive: 0xff5a1a, emissiveIntensity: 1.4 })
-);
-bossCore.position.y = 3.6;
-boss.add(bossCore);
-boss.position.set(0, 1.2, -17);
-scene.add(boss);
-cylinders.push({ x: 0, z: -17, r: 3.6, top: 8 });
-
-// --- Training dummy (center of the room) ------------------------------------
-const DUMMY_POS = new THREE.Vector3(0, 0, 2);
-const DUMMY_R = 0.85;
+// --- Training dummy (sized to match the hero) -------------------------------
+const DUMMY_POS = new THREE.Vector3(0, 0, -5);
+const DUMMY_R = 0.55;
 const dummy = new THREE.Group();
-const dPost = new THREE.Mesh(
-  new THREE.CylinderGeometry(0.18, 0.24, 2.2, 10),
-  new THREE.MeshStandardMaterial({ color: 0x6b4a2b, roughness: 1 })
-);
-dPost.position.y = 1.1;
-dPost.castShadow = true;
-dummy.add(dPost);
 const dummyMat = new THREE.MeshStandardMaterial({ color: 0xcdb27a, roughness: 0.9 });
-const dBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.55, 0.9, 6, 12), dummyMat);
-dBody.position.y = 1.95;
+const dBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 0.95, 6, 12), dummyMat);
+dBody.position.y = 1.05;
 dBody.castShadow = true;
 dummy.add(dBody);
-const dHead = new THREE.Mesh(new THREE.SphereGeometry(0.34, 16, 16), dummyMat);
-dHead.position.y = 2.85;
+const dHead = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 16), dummyMat);
+dHead.position.y = 1.92;
 dHead.castShadow = true;
 dummy.add(dHead);
+const dStand = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.1, 0.14, 0.5, 10),
+  new THREE.MeshStandardMaterial({ color: 0x6b4a2b, roughness: 1 })
+);
+dStand.position.y = 0.25;
+dummy.add(dStand);
 const plate = new THREE.Mesh(
-  new THREE.CircleGeometry(0.5, 28),
+  new THREE.CircleGeometry(0.42, 28),
   new THREE.MeshStandardMaterial({ map: makeTargetTexture(), transparent: true })
 );
-plate.position.set(0, 1.95, 0.58);
+plate.position.set(0, 1.2, 0.45);
 dummy.add(plate);
 dummy.position.copy(DUMMY_POS);
 scene.add(dummy);
-cylinders.push({ x: DUMMY_POS.x, z: DUMMY_POS.z, r: DUMMY_R, top: 3 });
+cylinders.push({ x: DUMMY_POS.x, z: DUMMY_POS.z, r: DUMMY_R, top: 2 });
 
 const dummyState = { max: 600, hp: 600, flash: 0, recoil: 0 };
 
@@ -310,7 +160,7 @@ swordPivot.add(blade, guard);
 swordPivot.rotation.set(0, 0.5, 0); // rest pose: held to the side
 hero.add(swordPivot);
 
-hero.position.set(0, 0, 16);
+hero.position.set(0, 0, 3);
 hero.rotation.y = Math.PI;
 scene.add(hero);
 hero.traverse((o) => (o.userData.noAim = true)); // don't aim at ourselves
@@ -492,10 +342,10 @@ function playAttackAnim() {
 
 // --- Tunable parameters (live-editable via the on-screen panel) -------------
 // Persisted to localStorage so your adjustments survive a reload.
-const TUNE_KEY = 'bossraid.tune.v2'; // v2: reset stale camera values to good defaults
+const TUNE_KEY = 'bossraid.tune.v3'; // v3: open arena, real-scale character + camera
 const tune = Object.assign(
-  { scale: 0.6, camDist: 3.2, eyeH: 2.65, shoulder: 1.05, fov: 77, yaw: 180,
-    wpx: 0, wpy: 0, wpz: 0.05, wrx: 0, wry: 0, wscale: 0.8 },
+  { scale: 1.75, camDist: 5.5, eyeH: 1.6, shoulder: 0.6, fov: 70, yaw: 180,
+    wpx: 0, wpy: 0, wpz: 0.05, wrx: 0, wry: 0, wscale: 1.6 },
   (() => {
     try {
       return JSON.parse(localStorage.getItem(TUNE_KEY) || '{}');
@@ -507,7 +357,7 @@ const tune = Object.assign(
 // Character size + weapon placement are now standardized in code (auto-fit to
 // every character via the skeleton + hand bone), so force the standards and
 // ignore any older per-character values that may be saved.
-Object.assign(tune, { scale: 0.6, wpx: 0, wpy: 0, wpz: 0.05, wrx: 0, wry: 0, wscale: 0.8 });
+Object.assign(tune, { scale: 1.75, wpx: 0, wpy: 0, wpz: 0.05, wrx: 0, wry: 0, wscale: 1.6 });
 function saveTune() {
   try {
     localStorage.setItem(TUNE_KEY, JSON.stringify(tune));
@@ -620,7 +470,7 @@ const MELEE_CD = 0.45;
 const MELEE_RANGE = 2.6;
 const RANGED_CD = 0.16;
 const PROJ_SPEED = 44;
-const boltGeo = new THREE.SphereGeometry(0.16, 10, 10);
+const boltGeo = new THREE.SphereGeometry(0.22, 12, 12);
 const boltMat = new THREE.MeshBasicMaterial({ color: 0x9fe8ff });
 
 function hitDummy(dmg, at) {
@@ -628,7 +478,7 @@ function hitDummy(dmg, at) {
   dummyState.flash = 0.12;
   dummyState.recoil = 0.18;
   spark(at, 9, 0xffd27a, 170);
-  spawnNumber(new THREE.Vector3(DUMMY_POS.x, 2.5, DUMMY_POS.z), dmg);
+  spawnNumber(new THREE.Vector3(DUMMY_POS.x, 2.4, DUMMY_POS.z), dmg);
   if (dummyState.hp <= 0) dummyState.hp = dummyState.max; // never dies, refills
 }
 
@@ -646,7 +496,7 @@ function doMelee() {
     const dot = (dx / dist) * lastForward.x + (dz / dist) * lastForward.z;
     if (dot > 0.2) {
       // within ~78° of aim
-      hitDummy(48 + Math.floor(Math.random() * 18), new THREE.Vector3(DUMMY_POS.x, 1.9, DUMMY_POS.z));
+      hitDummy(48 + Math.floor(Math.random() * 18), new THREE.Vector3(DUMMY_POS.x, 1.1, DUMMY_POS.z));
     }
   }
 }
@@ -742,7 +592,7 @@ function updateCombat(dt) {
   }
 
   // Projectiles (3D).
-  const dpos = new THREE.Vector3(DUMMY_POS.x, 1.9, DUMMY_POS.z);
+  const dpos = new THREE.Vector3(DUMMY_POS.x, 1.1, DUMMY_POS.z);
   for (let i = projectiles.length - 1; i >= 0; i--) {
     const p = projectiles[i];
     p.mesh.position.addScaledVector(p.vel, dt);
@@ -754,7 +604,7 @@ function updateCombat(dt) {
       pos.z > Z_MAX ||
       pos.z < Z_MIN ||
       pos.y < 0.05 ||
-      pos.y > WALL_H;
+      pos.y > 30;
     if (hit) hitDummy(26 + Math.floor(Math.random() * 12), pos.clone());
     if (hit || p.life <= 0 || out) {
       scene.remove(p.mesh);
@@ -805,7 +655,7 @@ function updateCombat(dt) {
   const frac = dummyState.hp / dummyState.max;
   dBarFill.scale.x = Math.max(0.0001, frac);
   dBarFill.position.x = -(DBAR_W * (1 - frac)) / 2;
-  dummyBar.position.set(DUMMY_POS.x, 3.5, DUMMY_POS.z);
+  dummyBar.position.set(DUMMY_POS.x, 2.5, DUMMY_POS.z);
   dummyBar.lookAt(camera.position);
 }
 
@@ -953,9 +803,6 @@ function update(dt) {
   camera.updateMatrixWorld();
 
   updateCombat(dt);
-
-  bossCore.rotation.y += dt * 0.6;
-  bossCore.material.emissiveIntensity = 1.1 + Math.sin(performance.now() / 350) * 0.4;
 }
 
 function lerpAngle(a, b, t) {
@@ -1100,7 +947,7 @@ function setupTuner() {
   const reset = document.getElementById('t-reset');
   if (reset)
     reset.addEventListener('click', () => {
-      Object.assign(tune, { scale: 1.3, camDist: 12, eyeH: 1.55, shoulder: 0.8, fov: 74, yaw: 180 });
+      Object.assign(tune, { scale: 1.75, camDist: 5.5, eyeH: 1.6, shoulder: 0.6, fov: 70, yaw: 180 });
       applyTune();
       saveTune();
       syncTunerInputs();
