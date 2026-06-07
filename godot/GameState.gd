@@ -6,7 +6,7 @@ extends Node
 # pre-made glb) faces one way; the FBX→glb-converted Mixamo characters come in
 # with the opposite forward axis, so they use flip=false.
 # Stats (player's formulas): HP = CON*STR, melee force F = STR*DEX*0.1, DEX also
-# speeds swings. def comes from equipment later (0 for now). Tune freely.
+# speeds swings. def/boots come from equipment (see armors/boots below). Tune freely.
 var characters := [
 	{"name": "Soldier", "file": "res://models/Soldier.glb", "flip": true, "str": 10, "dex": 10, "con": 10},
 	{"name": "Vanguard", "file": "res://models/Vanguard.glb", "flip": false, "str": 13, "dex": 8, "con": 11},
@@ -30,6 +30,25 @@ var weapons := [
 ]
 var weapon := 0
 
+# Armor (equipment). def subtracts directly from incoming damage, after any
+# block/parry reduction. Stat-only for now (no mesh). Cycle in-game with [R].
+var armors := [
+	{"name": "Cloth", "def": 0},
+	{"name": "Leather", "def": 4},
+	{"name": "Chainmail", "def": 9},
+	{"name": "Plate", "def": 16},
+]
+var armor := 0
+
+# Boots/greaves. kick = flat damage added to the kick attack (which ignores the
+# weapon and uses boots instead). Cycle in-game with [T].
+var boots := [
+	{"name": "Bare Feet", "kick": 0},
+	{"name": "Leather Boots", "kick": 10},
+	{"name": "Steel Greaves", "kick": 22},
+]
+var boot := 0
+
 
 func current() -> Dictionary:
 	return characters[clampi(selected, 0, characters.size() - 1)]
@@ -37,3 +56,11 @@ func current() -> Dictionary:
 
 func weapon_data() -> Dictionary:
 	return weapons[clampi(weapon, 0, weapons.size() - 1)]
+
+
+func armor_data() -> Dictionary:
+	return armors[clampi(armor, 0, armors.size() - 1)]
+
+
+func boots_data() -> Dictionary:
+	return boots[clampi(boot, 0, boots.size() - 1)]
