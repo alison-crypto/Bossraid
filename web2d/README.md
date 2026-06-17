@@ -21,11 +21,22 @@ python3 -m http.server 8000
 
 ## Controls
 
+**Keyboard (desktop):**
 - **WASD / arrows** — move
 - **J** — light attack (front arc, in range)
 - **L** — heavy attack (slower windup baked into cooldown; bigger hit)
 - **Space** — dodge (dash + i-frames)
 - **R** — restart after VICTORY / DEFEATED
+
+**Touch (phone) — shown automatically on touch devices:**
+- **Left thumb** — floating virtual stick (anchors wherever you press the left
+  half of the screen) to move.
+- **Right-hand buttons** — ⚔ light, ⚡ heavy, » dodge.
+- Tap ⚔ to restart on the game-over screen.
+
+Built on Pointer Events, so the stick + buttons also respond to a mouse for quick
+desktop testing. The page scales the canvas to the screen and disables
+scroll/zoom gestures; on a phone, hold it in **landscape**.
 
 The boss telegraphs a ground slam (red ring grows during wind-up). Step out of the
 ring **or** dodge through it; standing in it when it lands hurts.

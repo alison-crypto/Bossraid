@@ -2,23 +2,43 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
   <title>Bossraid 2D</title>
   <style>
+    :root { --aspect: 1.6; } /* 960 / 600 */
+    * { box-sizing: border-box; }
     html, body {
-      margin: 0; height: 100%;
+      margin: 0; height: 100%; overflow: hidden;
       background: #0a0c12; color: #cfd6e4;
       font-family: system-ui, sans-serif;
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center; gap: 12px;
+      -webkit-user-select: none; user-select: none;
+      -webkit-touch-callout: none; overscroll-behavior: none;
     }
-    h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: 0.5px; color: #aeb7c8; }
-    canvas { border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); image-rendering: pixelated; }
+    body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+    h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: .5px; color: #aeb7c8; }
+    #wrap {
+      position: relative;
+      width: min(100vw, calc(100vh * var(--aspect)));
+      max-width: 100vw;
+    }
+    canvas {
+      display: block; width: 100%; height: auto;
+      aspect-ratio: var(--aspect);
+      border-radius: 8px;
+      touch-action: none;            /* no scroll/zoom gestures over the game */
+      box-shadow: 0 10px 40px rgba(0,0,0,.5);
+    }
+    /* On short/landscape phones, drop the title so the canvas fills the screen */
+    @media (max-height: 480px) { h1 { display: none; } body { gap: 0; } }
   </style>
 </head>
 <body>
   <h1>BOSSRAID 2D — Floor 1: Stone Golem</h1>
-  <canvas id="game"></canvas>
+  <div id="wrap">
+    <canvas id="game"></canvas>
+  </div>
   <script type="module" src="./src/main.js"></script>
 </body>
 </html>
