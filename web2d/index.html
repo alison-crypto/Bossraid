@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bossraid 2D</title>
+  <style>
+    html, body {
+      margin: 0; height: 100%;
+      background: #0a0c12; color: #cfd6e4;
+      font-family: system-ui, sans-serif;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 12px;
+    }
+    h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: 0.5px; color: #aeb7c8; }
+    canvas { border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); image-rendering: pixelated; }
+  </style>
+</head>
+<body>
+  <h1>BOSSRAID 2D — Floor 1: Stone Golem</h1>
+  <canvas id="game"></canvas>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

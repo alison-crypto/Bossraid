@@ -1,0 +1,10 @@
+{
+  "name": "bossraid-2d",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bossraid 2D — a top-down boss-arena prototype (HTML5 canvas).",
+  "scripts": {
+    "test": "node --test"
+  }
+}
