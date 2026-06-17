@@ -3,7 +3,7 @@
 
 import { createGame, step, emptyInput, CFG } from "./game.js";
 import { stickVector, knobOffset, pointInCircle } from "./touch.js";
-import { Animator, frameIndex } from "./anim.js";
+import { Animator, frameIndex, clipDuration } from "./anim.js";
 import { loadStrip, drawStrip } from "./sprites.js";
 
 const canvas = document.getElementById("game");
@@ -63,16 +63,38 @@ const GOLEM = {
   walk:  loadStrip("./assets/golem_walk.png", 8, 10, true),
   slam:  loadStrip("./assets/golem_slam.png", 10, 14, false),
   hit:   loadStrip("./assets/golem_hit.png", 4, 16, false),
-  death: loadStrip("./assets/golem_death.png", 12, 12, false),
+  death: loadStrip("./assets/golem_death.png", 6, 9, false),
 };
 const bossAnim = new Animator();
 
+// View-only signals the sim doesn't expose directly: a brief flinch when the
+// boss takes damage, and whether it moved this frame (it chases in "idle").
+let bossHitT = 0;       // seconds left on the hit-react flinch
+let prevBossHp = null;
+let prevBossPos = null;
+let bossMoving = false;
+
+function updateBossAnimSignals(dt) {
+  const b = game.boss;
+  if (prevBossHp !== null && b.hp < prevBossHp && b.hp > 0) {
+    bossHitT = clipDuration(GOLEM.hit.fps, GOLEM.hit.frames);
+  }
+  prevBossHp = b.hp;
+  bossHitT = Math.max(0, bossHitT - dt);
+  const moved = prevBossPos ? Math.hypot(b.x - prevBossPos.x, b.y - prevBossPos.y) : 0;
+  bossMoving = moved > 0.5; // chasing the player (idle-state movement)
+  prevBossPos = { x: b.x, y: b.y };
+}
+
 // Map the boss sim state -> an animation clip.
+// Priority: death > slam (attack) > hit flinch > walk (chasing) > idle.
 function bossClip() {
   const b = game.boss;
   if (game.over === "won") return "death";
   if (b.state === "windup" || b.state === "strike") return "slam";
-  return "idle"; // walk / grab / rune-surge clips slot in once those states exist
+  if (bossHitT > 0) return "hit";
+  if (b.state === "idle" && bossMoving) return "walk";
+  return "idle"; // grab / rune-surge clips slot in once those states exist
 }
 
 function toCanvas(e) {
@@ -173,6 +195,7 @@ function frame(now) {
   if (game.over && (keys.has("KeyR") || pressed("attack"))) game = createGame();
   if (!game.over) step(game, readInput(), dt);
 
+  updateBossAnimSignals(dt);
   bossAnim.play(bossClip());
   bossAnim.tick(dt);
 

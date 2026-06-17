@@ -23,9 +23,16 @@ file exists, the boss falls back to a placeholder circle (the game still runs).
 | `golem_walk.png`  | 8  | 10 | yes |
 | `golem_slam.png`  | 10 | 14 | no  |
 | `golem_hit.png`   | 4  | 16 | no  |
-| `golem_death.png` | 12 | 12 | no  |
+| `golem_death.png` | 6  | 9  | no  |
 
-(Frame counts match your sheets. FPS is tunable in `src/main.js` → `GOLEM`.)
+(Frame counts match the packed strips. FPS is tunable in `src/main.js` → `GOLEM`.)
+
+## How these PNGs are produced
+The five strips here are **generated**, not hand-placed. The raw ChatGPT art
+lives in `web2d/art-src/golem_*.src.png` (a white-background grid of frames);
+`npm run pack-sprites` (see `web2d/tools/pack-sprites.mjs`) keys out the white
+background, trims each frame, and repacks them into the uniform 512-tall,
+single-row strips above. Re-run it whenever the source art is regenerated.
 
 ## Start with just one — the idle proof
 Generate **`golem_idle.png`** only: a 6-frame transparent strip, e.g.
