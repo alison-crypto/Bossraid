@@ -3,6 +3,8 @@
 
 import { createGame, step, emptyInput, CFG } from "./game.js";
 import { stickVector, knobOffset, pointInCircle } from "./touch.js";
+import { Animator, frameIndex } from "./anim.js";
+import { loadStrip, drawStrip } from "./sprites.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -51,6 +53,27 @@ const BTN = [
 
 const stick = { active: false, id: null, base: { x: 0, y: 0 }, cur: { x: 0, y: 0 } };
 const pointers = new Map(); // pointerId -> { role }
+
+// --- boss sprite sheet (drop-in art) ---------------------------------------
+// Each clip is ONE transparent PNG strip in web2d/assets/ (see assets/README).
+// Missing files fall back to the placeholder circle, so the game runs today.
+const BOSS_DISPLAY_H = 190; // on-screen height of the golem in px
+const GOLEM = {
+  idle:  loadStrip("./assets/golem_idle.png", 6, 8, true),
+  walk:  loadStrip("./assets/golem_walk.png", 8, 10, true),
+  slam:  loadStrip("./assets/golem_slam.png", 10, 14, false),
+  hit:   loadStrip("./assets/golem_hit.png", 4, 16, false),
+  death: loadStrip("./assets/golem_death.png", 12, 12, false),
+};
+const bossAnim = new Animator();
+
+// Map the boss sim state -> an animation clip.
+function bossClip() {
+  const b = game.boss;
+  if (game.over === "won") return "death";
+  if (b.state === "windup" || b.state === "strike") return "slam";
+  return "idle"; // walk / grab / rune-surge clips slot in once those states exist
+}
 
 function toCanvas(e) {
   const r = canvas.getBoundingClientRect();
@@ -150,6 +173,9 @@ function frame(now) {
   if (game.over && (keys.has("KeyR") || pressed("attack"))) game = createGame();
   if (!game.over) step(game, readInput(), dt);
 
+  bossAnim.play(bossClip());
+  bossAnim.tick(dt);
+
   render();
   requestAnimationFrame(frame);
 }
@@ -179,13 +205,18 @@ function render() {
     circle(b.slam.x, b.slam.y, CFG.slamR, true, true);
   }
 
-  // boss
-  ctx.fillStyle = { idle: "#6f7787", windup: "#c2553f", strike: "#ff9c44", recover: "#555b69" }[b.state];
-  circle(b.x, b.y, b.r, true, false);
-  ctx.fillStyle = "#0c0e14";
-  ctx.font = "bold 20px system-ui, sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText("GOLEM", b.x, b.y + 6);
+  // boss — animated sprite if its art is loaded, else the placeholder circle
+  const clip = GOLEM[bossAnim.clip];
+  const idx = clip ? frameIndex(bossAnim.t, clip.fps, clip.frames, clip.loop) : 0;
+  const drewBoss = clip ? drawStrip(ctx, clip, idx, b.x, b.y + b.r, BOSS_DISPLAY_H, p.x < b.x) : false;
+  if (!drewBoss) {
+    ctx.fillStyle = { idle: "#6f7787", windup: "#c2553f", strike: "#ff9c44", recover: "#555b69" }[b.state];
+    circle(b.x, b.y, b.r, true, false);
+    ctx.fillStyle = "#0c0e14";
+    ctx.font = "bold 20px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("GOLEM", b.x, b.y + 6);
+  }
 
   // player
   const inv = p.invuln > 0 && Math.floor(game.t * 30) % 2 === 0;
