@@ -5,6 +5,10 @@
   "type": "module",
   "description": "Bossraid 2D — a top-down boss-arena prototype (HTML5 canvas).",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "pack-sprites": "node tools/pack-sprites.mjs"
+  },
+  "devDependencies": {
+    "pngjs": "^7.0.0"
   }
 }
