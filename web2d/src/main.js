@@ -18,17 +18,27 @@ const TOUCH = matchMedia("(pointer: coarse)").matches || "ontouchstart" in windo
 // touch scrolling/bounce (iOS ignores touch-action for the page scroll).
 document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
 
-// Go fullscreen on the first user gesture (needs a gesture; ignored where
-// unsupported, e.g. iOS Safari — the locked layout covers that case anyway).
-let fsTried = false;
-function tryFullscreen() {
-  if (fsTried) return;
-  fsTried = true;
+// Fullscreen toggle button (⛶). Works on Android/desktop; iOS Safari can't
+// fullscreen a page (only <video>), but the locked layout already fills it.
+const fsBtn = document.getElementById("fs");
+function isFs() { return document.fullscreenElement || document.webkitFullscreenElement; }
+function toggleFullscreen() {
   try {
-    const el = document.documentElement;
-    const req = el.requestFullscreen || el.webkitRequestFullscreen;
-    if (req) { const r = req.call(el); if (r && r.catch) r.catch(() => {}); }
+    if (!isFs()) {
+      const el = document.documentElement;
+      const req = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (req) { const r = req.call(el); if (r && r.catch) r.catch(() => {}); }
+    } else {
+      const exit = document.exitFullscreen || document.webkitExitFullscreen;
+      if (exit) exit.call(document);
+    }
   } catch (_) { /* not allowed here — fine */ }
+}
+if (fsBtn) {
+  fsBtn.addEventListener("click", toggleFullscreen);
+  const sync = () => { fsBtn.textContent = isFs() ? "⊠" : "⛶"; };
+  document.addEventListener("fullscreenchange", sync);
+  document.addEventListener("webkitfullscreenchange", sync);
 }
 
 // --- on-screen controls (canvas coords) ------------------------------------
@@ -52,7 +62,6 @@ function toCanvas(e) {
 
 function onDown(e) {
   e.preventDefault();
-  tryFullscreen();
   const p = toCanvas(e);
   // buttons first (right side)
   for (const b of BTN) {

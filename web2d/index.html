@@ -29,10 +29,21 @@
       aspect-ratio: 1.6;                  /* 960 / 600 */
       touch-action: none;
     }
+    #fs {
+      position: fixed; top: 10px; right: 10px; z-index: 10;
+      width: 46px; height: 46px; border-radius: 9px;
+      border: 1px solid rgba(180,200,230,.45);
+      background: rgba(20,24,34,.62); color: #dfe7f5;
+      font-size: 22px; line-height: 1; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      touch-action: manipulation;
+    }
+    #fs:active { background: rgba(45,54,74,.95); }
   </style>
 </head>
 <body>
   <div id="wrap"><canvas id="game"></canvas></div>
+  <button id="fs" title="Fullscreen" aria-label="Fullscreen">⛶</button>
   <script type="module" src="./src/main.js"></script>
 </body>
 </html>
