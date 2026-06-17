@@ -3,6 +3,8 @@
 
 import { createGame, step, emptyInput, CFG } from "./game.js";
 import { stickVector, knobOffset, pointInCircle } from "./touch.js";
+import { Animator, frameIndex } from "./anim.js";
+import { loadStrip, drawStrip } from "./sprites.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -13,6 +15,33 @@ const W = canvas.width, H = canvas.height;
 let game = createGame();
 
 const TOUCH = matchMedia("(pointer: coarse)").matches || "ontouchstart" in window;
+
+// Belt-and-suspenders against the page moving on mobile: block document-level
+// touch scrolling/bounce (iOS ignores touch-action for the page scroll).
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+// Fullscreen toggle button (⛶). Works on Android/desktop; iOS Safari can't
+// fullscreen a page (only <video>), but the locked layout already fills it.
+const fsBtn = document.getElementById("fs");
+function isFs() { return document.fullscreenElement || document.webkitFullscreenElement; }
+function toggleFullscreen() {
+  try {
+    if (!isFs()) {
+      const el = document.documentElement;
+      const req = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (req) { const r = req.call(el); if (r && r.catch) r.catch(() => {}); }
+    } else {
+      const exit = document.exitFullscreen || document.webkitExitFullscreen;
+      if (exit) exit.call(document);
+    }
+  } catch (_) { /* not allowed here — fine */ }
+}
+if (fsBtn) {
+  fsBtn.addEventListener("click", toggleFullscreen);
+  const sync = () => { fsBtn.textContent = isFs() ? "⊠" : "⛶"; };
+  document.addEventListener("fullscreenchange", sync);
+  document.addEventListener("webkitfullscreenchange", sync);
+}
 
 // --- on-screen controls (canvas coords) ------------------------------------
 const STICK = { hintX: 120, hintY: H - 120, R: 78, knobR: 36 };
@@ -25,6 +54,27 @@ const BTN = [
 const stick = { active: false, id: null, base: { x: 0, y: 0 }, cur: { x: 0, y: 0 } };
 const pointers = new Map(); // pointerId -> { role }
 
+// --- boss sprite sheet (drop-in art) ---------------------------------------
+// Each clip is ONE transparent PNG strip in web2d/assets/ (see assets/README).
+// Missing files fall back to the placeholder circle, so the game runs today.
+const BOSS_DISPLAY_H = 190; // on-screen height of the golem in px
+const GOLEM = {
+  idle:  loadStrip("./assets/golem_idle.png", 6, 8, true),
+  walk:  loadStrip("./assets/golem_walk.png", 8, 10, true),
+  slam:  loadStrip("./assets/golem_slam.png", 10, 14, false),
+  hit:   loadStrip("./assets/golem_hit.png", 4, 16, false),
+  death: loadStrip("./assets/golem_death.png", 12, 12, false),
+};
+const bossAnim = new Animator();
+
+// Map the boss sim state -> an animation clip.
+function bossClip() {
+  const b = game.boss;
+  if (game.over === "won") return "death";
+  if (b.state === "windup" || b.state === "strike") return "slam";
+  return "idle"; // walk / grab / rune-surge clips slot in once those states exist
+}
+
 function toCanvas(e) {
   const r = canvas.getBoundingClientRect();
   return {
@@ -34,6 +84,7 @@ function toCanvas(e) {
 }
 
 function onDown(e) {
+  e.preventDefault();
   const p = toCanvas(e);
   // buttons first (right side)
   for (const b of BTN) {
@@ -58,17 +109,17 @@ function onDown(e) {
 
 function onMove(e) {
   if (stick.active && e.pointerId === stick.id) {
-    stick.cur = toCanvas(e);
     e.preventDefault();
+    stick.cur = toCanvas(e);
   }
 }
 
 function onUp(e) {
   const rec = pointers.get(e.pointerId);
   if (rec) {
+    e.preventDefault();
     if (rec.role === "stick") { stick.active = false; stick.id = null; }
     pointers.delete(e.pointerId);
-    e.preventDefault();
   }
 }
 
@@ -122,6 +173,9 @@ function frame(now) {
   if (game.over && (keys.has("KeyR") || pressed("attack"))) game = createGame();
   if (!game.over) step(game, readInput(), dt);
 
+  bossAnim.play(bossClip());
+  bossAnim.tick(dt);
+
   render();
   requestAnimationFrame(frame);
 }
@@ -151,13 +205,18 @@ function render() {
     circle(b.slam.x, b.slam.y, CFG.slamR, true, true);
   }
 
-  // boss
-  ctx.fillStyle = { idle: "#6f7787", windup: "#c2553f", strike: "#ff9c44", recover: "#555b69" }[b.state];
-  circle(b.x, b.y, b.r, true, false);
-  ctx.fillStyle = "#0c0e14";
-  ctx.font = "bold 20px system-ui, sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText("GOLEM", b.x, b.y + 6);
+  // boss — animated sprite if its art is loaded, else the placeholder circle
+  const clip = GOLEM[bossAnim.clip];
+  const idx = clip ? frameIndex(bossAnim.t, clip.fps, clip.frames, clip.loop) : 0;
+  const drewBoss = clip ? drawStrip(ctx, clip, idx, b.x, b.y + b.r, BOSS_DISPLAY_H, p.x < b.x) : false;
+  if (!drewBoss) {
+    ctx.fillStyle = { idle: "#6f7787", windup: "#c2553f", strike: "#ff9c44", recover: "#555b69" }[b.state];
+    circle(b.x, b.y, b.r, true, false);
+    ctx.fillStyle = "#0c0e14";
+    ctx.font = "bold 20px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("GOLEM", b.x, b.y + 6);
+  }
 
   // player
   const inv = p.invuln > 0 && Math.floor(game.t * 30) % 2 === 0;
