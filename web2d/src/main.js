@@ -14,6 +14,23 @@ let game = createGame();
 
 const TOUCH = matchMedia("(pointer: coarse)").matches || "ontouchstart" in window;
 
+// Belt-and-suspenders against the page moving on mobile: block document-level
+// touch scrolling/bounce (iOS ignores touch-action for the page scroll).
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+// Go fullscreen on the first user gesture (needs a gesture; ignored where
+// unsupported, e.g. iOS Safari — the locked layout covers that case anyway).
+let fsTried = false;
+function tryFullscreen() {
+  if (fsTried) return;
+  fsTried = true;
+  try {
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req) { const r = req.call(el); if (r && r.catch) r.catch(() => {}); }
+  } catch (_) { /* not allowed here — fine */ }
+}
+
 // --- on-screen controls (canvas coords) ------------------------------------
 const STICK = { hintX: 120, hintY: H - 120, R: 78, knobR: 36 };
 const BTN = [
@@ -34,6 +51,8 @@ function toCanvas(e) {
 }
 
 function onDown(e) {
+  e.preventDefault();
+  tryFullscreen();
   const p = toCanvas(e);
   // buttons first (right side)
   for (const b of BTN) {
@@ -58,17 +77,17 @@ function onDown(e) {
 
 function onMove(e) {
   if (stick.active && e.pointerId === stick.id) {
-    stick.cur = toCanvas(e);
     e.preventDefault();
+    stick.cur = toCanvas(e);
   }
 }
 
 function onUp(e) {
   const rec = pointers.get(e.pointerId);
   if (rec) {
+    e.preventDefault();
     if (rec.role === "stick") { stick.active = false; stick.id = null; }
     pointers.delete(e.pointerId);
-    e.preventDefault();
   }
 }
 
