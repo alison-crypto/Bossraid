@@ -161,9 +161,29 @@ static func bounds(model: Node3D):
 static func fit_height(model: Node3D, target_h: float) -> void:
 	model.scale = Vector3.ONE
 	var b = bounds(model)
-	if b == null or b.height <= 0.0:
+	var h: float = b.height if b != null else 0.0
+	var min_y: float = b.min_y if b != null else 0.0
+	# Some skinned meshes (e.g. the Mixamo-rigged golem) report a degenerate
+	# mesh AABB — the real size lives in the skeleton's rest pose. If the mesh
+	# AABB is implausibly small next to the bone span, measure from the skeleton
+	# instead and pad for the silhouette that extends past the outermost bones
+	# (head top, soles, horns).
+	var sk := find_skeleton(model)
+	if sk:
+		var inv := model.global_transform.affine_inverse()
+		var ymn := INF
+		var ymx := -INF
+		for i in sk.get_bone_count():
+			var oy: float = (inv * sk.global_transform * sk.get_bone_global_rest(i)).origin.y
+			ymn = min(ymn, oy)
+			ymx = max(ymx, oy)
+		var span: float = ymx - ymn
+		if span > 0.0 and h < span * 0.5:
+			h = span * 1.18
+			min_y = ymn - span * 0.09
+	if h <= 0.0:
 		return
-	var s: float = target_h / b.height
+	var s: float = target_h / h
 	model.scale = Vector3(s, s, s)
-	# bounds() reports model-local (unscaled) extents; convert feet offset by s.
-	model.position.y -= b.min_y * s
+	# height/min_y are model-local (unscaled) extents; convert feet offset by s.
+	model.position.y -= min_y * s

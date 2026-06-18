@@ -4,3 +4,6 @@ dist/
 *.log
 coverage/
 .vite/
+
+# Godot 4 generated cache (regenerated on import)
+/godot/.godot/

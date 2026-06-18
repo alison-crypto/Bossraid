@@ -62,7 +62,7 @@ const ARROW_DRAG := 0.0006
 const RANGED_CD := 0.4
 
 const PLAYER_MAX := 100.0
-const BOSS_MAX := 400.0
+const BOSS_MAX := 8000.0
 const SLAM_RADIUS := 3.6
 
 var player: CharacterBody3D
@@ -76,6 +76,7 @@ var pitch := -0.2
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 var cur_anim := ""
 var idle_anim := ""
+var bowdraw_anim := "" # drawn-bow aim pose (played while aiming with a bow)
 var run_anim := ""
 var attack_anim := ""   # first combo swing (outward slash)
 var attack_anim2 := ""  # second combo swing (inward slash)
@@ -95,7 +96,7 @@ var aiming := false
 var cam_rest := Vector3.ZERO
 var face_flip := true
 var skel: Skeleton3D
-var weapon: MeshInstance3D
+var weapon: Node3D # held weapon: real model (wrapper Node3D) or placeholder box (MeshInstance3D)
 var weapon_attach: BoneAttachment3D
 var weapon_scaled := false
 var weapon_offset := WEAPON_OFFSET
@@ -139,6 +140,7 @@ var boss_idle := ""
 var boss_walk := ""
 var boss_attack := ""
 var boss_clip := ""
+var boss_skel: Skeleton3D
 var boss_mat: StandardMaterial3D
 var boss_pos := Vector3(0, 0, -18)
 var boss_hp := BOSS_MAX
@@ -185,7 +187,13 @@ func _build_environment() -> void:
 	var env := Environment.new()
 	env.background_mode = Environment.BG_SKY
 	var sky := Sky.new()
-	sky.sky_material = ProceduralSkyMaterial.new()
+	var sky_tex = load("res://env/sky.png")
+	if sky_tex:
+		var pano := PanoramaSkyMaterial.new()
+		pano.panorama = sky_tex
+		sky.sky_material = pano
+	else:
+		sky.sky_material = ProceduralSkyMaterial.new()
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.ambient_light_energy = 0.6
@@ -206,7 +214,19 @@ func _build_ground() -> void:
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(200, 200)
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.42, 0.49, 0.32)
+	var alb = load("res://env/ground_albedo.png")
+	if alb:
+		mat.albedo_texture = alb
+		mat.uv1_scale = Vector3(40, 40, 1) # tile across the 200 m plane (~5 m tiles)
+		var gn = load("res://env/ground_normal.png")
+		if gn:
+			mat.normal_enabled = true
+			mat.normal_texture = gn
+		var gr = load("res://env/ground_rough.png")
+		if gr:
+			mat.roughness_texture = gr
+	else:
+		mat.albedo_color = Color(0.42, 0.49, 0.32)
 	plane.material = mat
 	mesh.mesh = plane
 	body.add_child(mesh)
@@ -236,29 +256,35 @@ func _build_boss(pos: Vector3) -> void:
 	boss_root = Node3D.new()
 	add_child(boss_root)
 	boss_root.position = pos
-	var scene := load("res://models/Pumpkin.glb")
+	var scene := load("res://models/Golem.glb")
 	if scene:
 		boss_model = scene.instantiate()
 		boss_root.add_child(boss_model)
-		# Scale to ~3.4 m (a hulking boss) and stand its feet on the ground.
-		AnimUtil.fit_height(boss_model, 3.4)
 		# Same converted-axis model as the heroes, so it faces movement with no
 		# flip; boss_root already aims it at the player (see _update_boss).
 		boss_mat = null # multi-material model: skip the tint flash
-		# Idle / walk (chase) / slam-attack clips, retargeted onto the boss rig.
+		_texture_golem(boss_model) # per-surface PBR, applied in-engine (not Blender)
+		# NOTE: scaling happens AFTER the native anim is applied (_scale_boss_to) —
+		# this glb's REST skeleton is degenerate (Blender texture re-export), so
+		# AnimUtil.fit_height's rest-pose measure produces a ~172x runaway scale.
 		boss_anim = AnimUtil.find_anim_player(boss_model)
 		var bsk := AnimUtil.find_skeleton(boss_model)
 		if boss_anim and bsk:
-			boss_idle = AnimUtil.merge(boss_anim, bsk, "res://models/anim/idle.glb", "Idle")
-			boss_walk = AnimUtil.merge(boss_anim, bsk, "res://models/anim/run.glb", "Walk")
-			# In-place overhead smash: all arm/spine rotation, so it reads fully
-			# after retarget (a leaping slam loses its punch when root motion is
-			# stripped for facing/grounding).
-			boss_attack = AnimUtil.merge(boss_anim, bsk, "res://models/anim/smash.glb", "Slam")
+			boss_skel = bsk
+			# Retarget the orc clips (idle/walk/slam) onto the golem. The earlier
+			# "collapse" was the 172x scale runaway on the broken textured glb, NOT
+			# the retarget itself; on this good-skeleton glb it should stand AND
+			# animate visibly (the native baked idle barely moves).
+			boss_idle = AnimUtil.merge(boss_anim, bsk, "res://models/anim/orc_idle.glb", "Idle")
+			boss_walk = AnimUtil.merge(boss_anim, bsk, "res://models/anim/orc_walk.glb", "Walk")
+			boss_attack = AnimUtil.merge(boss_anim, bsk, "res://models/anim/orc_slam.glb", "Slam")
 			_set_anim_loop(boss_anim, boss_idle, true)
 			_set_anim_loop(boss_anim, boss_walk, true)
 			_set_anim_loop(boss_anim, boss_attack, false)
 			_boss_play(boss_idle)
+			boss_anim.advance(0.0)
+			_scale_boss_to(4.0)
+			_ground_boss()
 	else:
 		var body := MeshInstance3D.new()
 		var cyl := CylinderMesh.new()
@@ -359,7 +385,7 @@ func _build_hud() -> void:
 
 	# Boss bar (top-center, 1280-wide design).
 	var name_label := Label.new()
-	name_label.text = "PUMPKIN GOLEM"
+	name_label.text = "STONE GOLEM"
 	name_label.position = Vector2(340, 18)
 	name_label.add_theme_font_size_override("font_size", 18)
 	root.add_child(name_label)
@@ -436,6 +462,7 @@ func _setup_animation() -> void:
 		# Weapon-specific attack clips (used by the weapon table in GameState).
 		AnimUtil.merge(anim, skel, "res://models/anim/stab.glb", "Stab")
 		AnimUtil.merge(anim, skel, "res://models/anim/bowshoot.glb", "Bow")
+		bowdraw_anim = AnimUtil.merge(anim, skel, "res://models/anim/bow_draw.glb", "BowDraw")
 		if idle_anim == "" and m_idle != "":
 			idle_anim = m_idle
 		if run_anim == "" and m_run != "":
@@ -454,6 +481,7 @@ func _setup_animation() -> void:
 	_set_loop(run_anim, true)
 	_set_loop(attack_anim, false) # one-shot
 	_set_loop(attack_anim2, false)
+	_set_loop(bowdraw_anim, true) # held aim pose
 	_set_loop(heavy_anim, false)
 	_set_loop(kick_anim, false)
 	_set_loop(block_anim, true) # held
@@ -529,8 +557,23 @@ func _attach_weapon() -> void:
 	_build_weapon_mesh()
 
 
-# (Re)build the held weapon mesh from the current weapon's data. A placeholder
-# box of len x thick until real weapon models are added.
+# Combined local-space AABB of all MeshInstance3Ds under `node`.
+func _aabb_of(node: Node3D) -> AABB:
+	var has := false
+	var result := AABB()
+	var inv := node.global_transform.affine_inverse()
+	for mi in node.find_children("*", "MeshInstance3D", true, false):
+		var m: MeshInstance3D = mi
+		if m.mesh == null:
+			continue
+		var a: AABB = (inv * m.global_transform) * m.mesh.get_aabb()
+		result = a if not has else result.merge(a)
+		has = true
+	return result
+
+
+# (Re)build the held weapon mesh. Uses the real weapon model (GameState
+# weapons[].mesh) auto-fitted to the hand; falls back to a placeholder box.
 func _build_weapon_mesh() -> void:
 	if weapon_attach == null:
 		return
@@ -538,20 +581,45 @@ func _build_weapon_mesh() -> void:
 		weapon.queue_free()
 	var w: Dictionary = GameState.weapon_data()
 	var length: float = w.get("len", 1.1)
-	var thick: float = w.get("thick", 0.06)
-	weapon = MeshInstance3D.new()
-	var blade := BoxMesh.new()
-	blade.size = Vector3(thick, thick, length)
-	var bm := StandardMaterial3D.new()
-	bm.albedo_color = w.get("color", Color(0.85, 0.9, 1.0))
-	bm.metallic = 0.6
-	blade.material = bm
-	weapon.mesh = blade
-	weapon.rotation_degrees = WEAPON_EULER
-	weapon_attach.add_child(weapon)
-	# Grip at the hand, blade extending out: offset half the length up the stood-up blade.
-	weapon_offset = Vector3(0, length * 0.5, 0)
-	weapon_scaled = false # re-apply the hand-bone counter-scale next frame
+	var mesh_path: String = String(w.get("mesh", ""))
+	var scene = load(mesh_path) if (mesh_path != "" and ResourceLoader.exists(mesh_path)) else null
+	if scene:
+		# Make the real model occupy the placeholder box's known-good hold: align its
+		# longest axis to +Z (the box's blade axis), then the wrapper's WEAPON_EULER
+		# points it up out of the hand and the offset stands it up — exactly like the
+		# box. Scaled so the long axis = `len`, centered like the box.
+		weapon = Node3D.new()
+		weapon.rotation_degrees = WEAPON_EULER
+		weapon_attach.add_child(weapon)
+		var inst: Node3D = scene.instantiate()
+		weapon.add_child(inst)
+		var sz: Vector3 = _aabb_of(inst).size
+		var longest: float = max(sz.x, max(sz.y, sz.z))
+		if sz.y >= sz.x and sz.y >= sz.z:
+			inst.rotation_degrees = Vector3(90, 0, 0)  # Y (blade) -> +Z
+		elif sz.x >= sz.y and sz.x >= sz.z:
+			inst.rotation_degrees = Vector3(0, 90, 0)  # X -> +Z
+		# (Z already longest -> no rotation)
+		inst.scale = Vector3.ONE * (length / longest if longest > 0.0 else 1.0)
+		var a2: AABB = _aabb_of(weapon) # inst AABB in wrapper space (after rot+scale)
+		inst.position -= (a2.position + a2.size * 0.5) # center on the wrapper origin
+		weapon_offset = Vector3(0, length * 0.5, 0)
+		weapon_scaled = false
+	else:
+		# Placeholder box (len x thick) when no model is available.
+		var thick: float = w.get("thick", 0.06)
+		weapon = MeshInstance3D.new()
+		var blade := BoxMesh.new()
+		blade.size = Vector3(thick, thick, length)
+		var bm := StandardMaterial3D.new()
+		bm.albedo_color = w.get("color", Color(0.85, 0.9, 1.0))
+		bm.metallic = 0.6
+		blade.material = bm
+		weapon.mesh = blade
+		weapon.rotation_degrees = WEAPON_EULER
+		weapon_attach.add_child(weapon)
+		weapon_offset = Vector3(0, length * 0.5, 0)
+		weapon_scaled = false
 
 
 # Switch the active weapon: rebuild the held mesh, reset the combo, update HUD.
@@ -760,7 +828,9 @@ func _physics_process(delta: float) -> void:
 	# Animation state: swings/dodge play their own one-shots; otherwise block
 	# pose (if holding block) or idle/run locomotion.
 	if not attacking and not dodging:
-		if blocking and block_anim != "":
+		if aiming and bowdraw_anim != "" and GameState.weapon_data().get("ranged", false):
+			_play(bowdraw_anim) # draw/hold the bow while aiming
+		elif blocking and block_anim != "":
 			_play(block_anim)
 		else:
 			_play(run_anim if dir.length() > 0.1 else idle_anim)
@@ -779,6 +849,88 @@ func _physics_process(delta: float) -> void:
 
 
 # --- Boss -------------------------------------------------------------------
+# Apply per-surface PBR to the golem IN-ENGINE (textures in models/golem_tex/),
+# rather than baking them into the glb via Blender — the Blender round-trip
+# damages the rig and flattens the baked animation. Maps each glb material-slot
+# name to its texture set.
+func _texture_golem(golem: Node3D) -> void:
+	var keys := {
+		"Corpo": "corpo", "Chifres": "chifres", "Garras": "garras",
+		"PedrasPeito": "peito", "Pedras Costas": "costas",
+		"DenteCima": "dentecima", "DenteBaixo": "dentebaixo", "NewMat01": "ombro",
+	}
+	for mi in golem.find_children("*", "MeshInstance3D", true, false):
+		var mesh: Mesh = mi.mesh
+		if mesh == null:
+			continue
+		for si in mesh.get_surface_count():
+			var src := mesh.surface_get_material(si)
+			var mname: String = src.resource_name if src else ""
+			var mat := StandardMaterial3D.new()
+			if mname == "Gold":
+				mat.albedo_color = Color(0.83, 0.66, 0.22)
+				mat.metallic = 1.0
+				mat.roughness = 0.35
+			elif keys.has(mname):
+				var key: String = keys[mname]
+				var alb := _gtex(key, "albedo")
+				if alb:
+					mat.albedo_texture = alb
+				var nrm := _gtex(key, "normal")
+				if nrm:
+					mat.normal_enabled = true
+					mat.normal_texture = nrm
+				var rgh := _gtex(key, "rough")
+				if rgh:
+					mat.roughness_texture = rgh
+			else:
+				mat.albedo_color = Color(0.55, 0.55, 0.55)
+			mi.set_surface_override_material(si, mat)
+
+
+func _gtex(key: String, kind: String) -> Texture2D:
+	var p := "res://models/golem_tex/%s_%s.png" % [key, kind]
+	return load(p) if ResourceLoader.exists(p) else null
+
+
+# Scale the boss to ~target_h metres, measured from its ANIMATED pose. This glb's
+# REST skeleton is degenerate (Blender's texture re-export collapsed the bind
+# pose to ~0), so AnimUtil.fit_height's rest measure divides into a ~172x runaway.
+# The played pose carries the true size. Pad (1.18) accounts for the mesh
+# silhouette extending past the outermost bones.
+func _scale_boss_to(target_h: float) -> void:
+	if not boss_skel or not boss_model:
+		return
+	boss_model.scale = Vector3.ONE
+	boss_anim.advance(0.0)
+	var lo := INF
+	var hi := -INF
+	for bi in boss_skel.get_bone_count():
+		var wy: float = (boss_skel.global_transform * boss_skel.get_bone_global_pose(bi)).origin.y
+		lo = min(lo, wy)
+		hi = max(hi, wy)
+	var span: float = hi - lo
+	if span <= 0.0:
+		return
+	var s: float = target_h / (span * 1.18)
+	boss_model.scale = Vector3(s, s, s)
+
+
+# Plant the boss: shift boss_root.y once so the lowest bone in the idle pose
+# sits on y=0. Called ONCE at build — the native idle keeps the feet planted, so
+# a stable one-time offset is correct. (Re-grounding every frame made it shake/
+# float, because a walk cycle constantly changes which bone is lowest.)
+func _ground_boss() -> void:
+	if not boss_skel or not boss_root:
+		return
+	var low_y := INF
+	for bi in boss_skel.get_bone_count():
+		var wy: float = (boss_skel.global_transform * boss_skel.get_bone_global_pose(bi)).origin.y
+		low_y = min(low_y, wy)
+	if low_y != INF:
+		boss_root.position.y -= low_y
+
+
 func _update_boss(delta: float) -> void:
 	if boss_dead or not boss_root:
 		return
@@ -1088,18 +1240,24 @@ func _do_ranged() -> void:
 	# Arrow physics: mass from STR (draw weight), launch speed from DEX (+ skill).
 	var mass := _arrow_mass()
 	var v0 := _arrow_v0()
-	var bolt := MeshInstance3D.new()
-	var sm := SphereMesh.new()
-	sm.radius = 0.12
-	sm.height = 0.24
-	var bm := StandardMaterial3D.new()
-	bm.albedo_color = Color(0.6, 0.9, 1.0)
-	bm.emission_enabled = true
-	bm.emission = Color(0.6, 0.9, 1.0)
-	sm.material = bm
-	bolt.mesh = sm
+	var bolt: Node3D
+	var arrow_scene = load("res://models/weapons/arrow1.glb")
+	if arrow_scene:
+		bolt = arrow_scene.instantiate()
+		add_child(bolt)
+		var asz: Vector3 = _aabb_of(bolt).size # tiny source; scale long axis to ~0.8 m
+		var along: float = max(asz.x, max(asz.y, asz.z))
+		if along > 0.0:
+			bolt.scale = Vector3.ONE * (0.8 / along)
+	else:
+		var ms := MeshInstance3D.new()
+		var sm := SphereMesh.new()
+		sm.radius = 0.12
+		sm.height = 0.24
+		ms.mesh = sm
+		bolt = ms
+		add_child(bolt)
 	bolt.position = player.global_position + Vector3(0, 1.2, 0)
-	add_child(bolt)
 	var aim := -cam.global_transform.basis.z # includes pitch — elevate for distance
 	projectiles.append({"mesh": bolt, "vel": aim.normalized() * v0, "mass": mass, "dmg": int(GameState.weapon_data().get("damage", 0)), "life": 4.0})
 
@@ -1129,6 +1287,10 @@ func _update_combat(delta: float) -> void:
 		if spd > 0.01:
 			p.vel -= p.vel.normalized() * (ARROW_DRAG * spd * spd / p.mass) * delta
 		p.mesh.position += p.vel * delta
+		# Point the arrow along its flight (shaft is +Z, so aim -Z backward).
+		if p.vel.length() > 0.1:
+			var up: Vector3 = Vector3.UP if absf(p.vel.normalized().y) < 0.99 else Vector3.FORWARD
+			p.mesh.look_at(p.mesh.global_position - p.vel, up)
 		p.life -= delta
 		# Kinetic-energy damage at impact: 0.5*m*v^2 + bow damage (far = softer).
 		var ke_dmg := int(round(0.5 * p.mass * p.vel.length_squared() + p.dmg))
