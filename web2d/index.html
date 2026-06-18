@@ -25,8 +25,10 @@
     }
     canvas {
       display: block;
-      max-width: 100%; max-height: 100%;  /* fill the screen, letterboxed to aspect */
-      aspect-ratio: 1.6;                  /* 960 / 600 */
+      /* Grow to the largest 960x600-aspect (1.6) rectangle that fits the
+         viewport — fills the screen/fullscreen without distorting. */
+      width:  min(100vw, calc(100vh * 1.6));
+      height: min(100vh, calc(100vw / 1.6));
       touch-action: none;
     }
     #fs {
