@@ -79,6 +79,88 @@ test("stepping out of the ring avoids the slam", () => {
   assert.equal(g.player.hp, 100);
 });
 
+test("attack choice cycles all patterns; never smashes at range", () => {
+  // Re-trigger the picker repeatedly, pinning the boss so distance is stable.
+  const collect = (px, bx) => {
+    const g = createGame();
+    g.player.x = px; g.player.y = 300;
+    const seen = new Set();
+    for (let n = 0; n < 8; n++) {
+      g.boss.state = "idle"; g.boss.cd = 0; g.boss.x = bx; g.boss.y = 300;
+      step(g, input(), 1 / 60);
+      seen.add(g.boss.attack);
+    }
+    return seen;
+  };
+  const far = collect(900, 100); // player well out of melee range
+  assert.ok(!far.has("smash"), "never smashes thin air at range");
+  assert.ok(far.size >= 3, "varied ranged/gap-closer patterns");
+
+  const near = collect(480, 480); // boss on top of the player
+  assert.ok(near.has("smash"), "smashes when in melee reach");
+});
+
+test("dash charge deals contact damage, and i-frames negate it", () => {
+  const mk = (invuln) => {
+    const g = createGame();
+    g.boss.x = 480; g.boss.y = 300; g.player.x = 480; g.player.y = 320;
+    g.player.invuln = invuln;
+    g.boss.attack = "dash"; g.boss.state = "strike"; g.boss.t = CFG.dashTime;
+    g.boss.dash = { dx: 0, dy: 1, active: true, hit: false };
+    step(g, input(), 1 / 60);
+    return g.player.hp;
+  };
+  assert.equal(mk(0), 100 - CFG.dashDmg, "contact hurts");
+  assert.equal(mk(0.5), 100, "i-frames negate the dash");
+});
+
+test("a scatter rock damages the player on contact and is spent", () => {
+  const g = createGame();
+  g.boss.x = 480; g.boss.y = 300; g.player.x = 480; g.player.y = 320; g.player.invuln = 0;
+  g.rocks.push({ x: 480, y: 310, vx: 0, vy: 200, r: CFG.smallRockR, dmg: CFG.smallRockDmg, big: false, hit: false });
+  step(g, input(), 1 / 60);
+  assert.equal(100 - g.player.hp, CFG.smallRockDmg);
+  assert.equal(g.rocks.length, 0, "scatter rock consumed on hit");
+});
+
+test("a big rock lands and persists as a solid obstacle", () => {
+  const g = createGame();
+  g.player.x = 100; g.player.y = 100; g.player.invuln = 99; // out of the way
+  g.rocks.push({
+    x: 480, y: 300, vx: 0, vy: 0, r: CFG.bigRockR, dmg: CFG.bigRockDmg, big: true,
+    tx: 480, ty: 300, travel: 0, landed: false, hit: false,
+  });
+  step(g, input(), 1 / 60); // travel<=0 -> lands and stays
+  assert.equal(g.rocks.length, 1);
+  assert.equal(g.rocks[0].landed, true);
+
+  // the player cannot walk through it
+  g.player.x = 480 - (CFG.bigRockR + g.player.r) + 6; g.player.y = 300;
+  step(g, input({ move: { x: 1, y: 0 } }), 1 / 60); // shove right into the boulder
+  const gap = Math.hypot(g.player.x - 480, g.player.y - 300);
+  assert.ok(gap >= CFG.bigRockR + g.player.r - 0.5, "player is pushed out of the boulder");
+});
+
+test("scatter fires rocks in all directions", () => {
+  const g = createGame();
+  g.boss.x = 480; g.boss.y = 300; g.player.x = 480; g.player.y = 560;
+  g.boss.attack = "scatter"; g.boss.state = "windup"; g.boss.t = 0.01;
+  step(g, input(), 0.02); // windup -> strike spawns the volley
+  assert.equal(g.rocks.length, CFG.scatterCount);
+});
+
+test("earthquake hits arena-wide unless dodged", () => {
+  const hit = createGame();
+  hit.boss.attack = "quake"; hit.boss.state = "windup"; hit.boss.t = 0.01; hit.player.invuln = 0;
+  step(hit, input(), 0.02);
+  assert.equal(100 - hit.player.hp, CFG.quakeDmg);
+
+  const safe = createGame();
+  safe.boss.attack = "quake"; safe.boss.state = "windup"; safe.boss.t = 0.01; safe.player.invuln = 0.5;
+  step(safe, input(), 0.02);
+  assert.equal(safe.player.hp, 100, "dodge i-frames avoid the quake");
+});
+
 test("an arrow that brings boss hp to 0 ends the game as a win", () => {
   const g = createGame();
   g.player.x = 480; g.player.y = 300; g.player.facing = { x: 0, y: -1 };

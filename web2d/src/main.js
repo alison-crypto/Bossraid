@@ -104,10 +104,14 @@ function updateBossAnimSignals(dt) {
 function bossClip() {
   const b = game.boss;
   if (game.over === "won") return "death";
-  if (b.state === "windup" || b.state === "strike") return "slam";
+  if (b.state === "windup" || b.state === "strike") {
+    // Placeholder mapping until per-attack art exists: the dash reads as a run,
+    // the rest share the slam pose. (Regenerating golem art is the next step.)
+    return b.attack === "dash" ? "walk" : "slam";
+  }
   if (bossHitT > 0) return "hit";
   if (b.state === "idle" && bossMoving) return "walk";
-  return "idle"; // grab / rune-surge clips slot in once those states exist
+  return "idle";
 }
 
 // View-only signals for the player: a brief shoot animation when an arrow is
@@ -291,6 +295,30 @@ function render() {
     }
   }
 
+  // dash-charge telegraph — a lane showing the locked lunge direction.
+  if (b.attack === "dash" && b.state === "windup") {
+    const k = 1 - b.t / CFG.dashWindup;
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(Math.atan2(b.dash.dy, b.dash.dx));
+    ctx.fillStyle = `rgba(255,90,70,${0.10 + 0.28 * k})`;
+    ctx.fillRect(0, -24, 240, 48);
+    ctx.restore();
+  }
+
+  // earthquake telegraph — pulsing red border on windup, full flash on impact.
+  if (b.attack === "quake") {
+    if (b.state === "windup") {
+      const k = 1 - b.t / CFG.quakeWindup;
+      ctx.strokeStyle = `rgba(255,80,60,${0.25 + 0.6 * k})`;
+      ctx.lineWidth = 6 + 26 * k;
+      ctx.strokeRect(10, 10, W - 20, H - 20);
+    } else if (b.state === "strike" && b.quake.active) {
+      ctx.fillStyle = "rgba(255,120,70,0.4)";
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+
   // boss — animated sprite if its art is loaded, else the placeholder circle
   const clip = GOLEM[bossAnim.clip];
   const idx = clip ? frameIndex(bossAnim.t, clip.fps, clip.frames, clip.loop) : 0;
@@ -302,6 +330,21 @@ function render() {
     ctx.font = "bold 20px system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.fillText("GOLEM", b.x, b.y + 6);
+  }
+
+  // boss rocks: scatter pellets, the flying big rock, and landed boulders that
+  // persist as solid obstacles.
+  for (const rk of game.rocks) {
+    if (rk.landed) {
+      ctx.fillStyle = "rgba(0,0,0,0.35)"; // grounded shadow
+      ctx.beginPath();
+      ctx.ellipse(rk.x, rk.y + rk.r * 0.7, rk.r * 1.1, rk.r * 0.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = rk.landed ? "#6b5c47" : rk.big ? "#7c6b54" : "#8a8170";
+    ctx.strokeStyle = "rgba(20,16,12,0.7)";
+    ctx.lineWidth = rk.landed ? 4 : 3;
+    circle(rk.x, rk.y, rk.r, true, true);
   }
 
   // arrows in flight (drawn under the characters)

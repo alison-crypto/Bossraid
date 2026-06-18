@@ -14,12 +14,22 @@ export const CFG = {
   playerR: 14, playerSpeed: 220, meleeRange: 70,
   attackCd: 0.35, heavyAttackCd: 0.7, arrowSpeed: 720, arrowR: 6,
   dodgeSpeed: 560, dodgeTime: 0.22, dodgeIframes: 0.30, hitInvuln: 0.6,
-  // Boss (telegraphed slam: chase -> windup -> strike -> recover). The slam is a
-  // melee smash centered ON the golem (matches the animation), so slamR is how
-  // far the shockwave around it reaches — not a ranged AoE at the player. The
-  // golem is fast and relentless so a ranged archer can't trivially kite it.
-  bossR: 40, bossSpeed: 165, bossMaxHp: 600,
-  slamR: 130, windup: 1.0, strike: 0.15, recover: 0.6, bossCd: 1.6, bossDmg: 22,
+  // Boss. Every attack runs chase -> windup (telegraph) -> strike (active) ->
+  // recover, and any hit is negated while the player is invulnerable — so a
+  // well-timed dodge i-frames all five patterns. The golem is fast and
+  // relentless so a ranged archer can't trivially kite it. bossCd is the gap
+  // between attacks.
+  bossR: 40, bossSpeed: 165, bossMaxHp: 600, bossCd: 1.5,
+  // 1) smash — melee shockwave ring centered on the golem (used in close range).
+  slamR: 130, windup: 0.9, strike: 0.15, recover: 0.55, bossDmg: 22,
+  // 2) dash charge — lunge along a locked line; contact damage (i-frame it).
+  dashWindup: 0.55, dashSpeed: 820, dashTime: 0.3, dashRecover: 0.6, dashDmg: 26,
+  // 3) big rock — one heavy projectile thrown at the player.
+  bigRockWindup: 0.7, bigRockSpeed: 400, bigRockR: 26, bigRockDmg: 24, rockRecover: 0.5,
+  // 4) scatter — 6 small rocks fired radially in all directions.
+  scatterWindup: 0.8, scatterCount: 6, smallRockSpeed: 330, smallRockR: 12, smallRockDmg: 13, scatterRecover: 0.65,
+  // 5) earthquake — arena-wide; only a dodge-roll's i-frames avoid it.
+  quakeWindup: 1.1, quakeActive: 0.3, quakeRecover: 0.9, quakeDmg: 28,
 };
 
 // --- tiny vector helpers ----------------------------------------------------
@@ -56,10 +66,14 @@ export function createGame(opts = {}) {
       x: CFG.arenaW * 0.5, y: CFG.arenaH * 0.28, r: CFG.bossR,
       hp: CFG.bossMaxHp, maxHp: CFG.bossMaxHp,
       state: "idle", t: 0, cd: CFG.bossCd,
+      attack: "smash", atkCycle: 0, // which pattern is running; cycles the ranged ones
       slam: { x: 0, y: 0, active: false },
+      dash: { dx: 0, dy: 0, active: false, hit: false },
+      quake: { active: false },
       lastHit: 0,
     },
     arrows: [], // in-flight player arrows: { x, y, vx, vy, dmg, heavy }
+    rocks: [],  // in-flight boss rocks:   { x, y, vx, vy, r, dmg, big }
   };
 }
 
@@ -115,7 +129,57 @@ export function step(s, input, dt) {
 
   _arrowsUpdate(s, dt);
   _bossUpdate(s, dt);
+  _rocksUpdate(s, dt);
   return s;
+}
+
+// Apply an incoming boss hit to the player (negated entirely by i-frames). All
+// five attack patterns funnel through here so dodge timing beats any of them.
+function _hitPlayer(s, raw) {
+  const p = s.player;
+  if (p.invuln > 0) return;
+  const dmg = damageTaken(raw, p.def);
+  p.hp = Math.max(0, p.hp - dmg);
+  p.lastHit = dmg;
+  p.invuln = CFG.hitInvuln;
+  if (p.hp <= 0) s.over = "lost";
+}
+
+// Push the player out of a landed boulder so it acts as a solid obstacle.
+function _resolveObstacle(p, rk) {
+  const dx = p.x - rk.x, dy = p.y - rk.y;
+  const d = Math.hypot(dx, dy), min = rk.r + p.r;
+  if (d < min && d > 1e-6) {
+    p.x = clamp(rk.x + (dx / d) * min, p.r, CFG.arenaW - p.r);
+    p.y = clamp(rk.y + (dy / d) * min, p.r, CFG.arenaH - p.r);
+  }
+}
+
+// Advance boss rocks. A big rock flies to its target, deals impact damage in
+// passing, then LANDS and persists as a solid obstacle. Small scatter rocks
+// damage on contact and are culled when they leave the arena.
+function _rocksUpdate(s, dt) {
+  const p = s.player;
+  const kept = [];
+  for (const rk of s.rocks) {
+    if (rk.landed) { _resolveObstacle(p, rk); kept.push(rk); continue; } // permanent boulder
+
+    rk.x += rk.vx * dt;
+    rk.y += rk.vy * dt;
+    if (!rk.hit && dist(rk, p) <= rk.r + p.r) { rk.hit = true; _hitPlayer(s, rk.dmg); }
+
+    if (rk.big) {
+      rk.travel -= Math.hypot(rk.vx, rk.vy) * dt;
+      if (rk.travel <= 0) { rk.x = rk.tx; rk.y = rk.ty; rk.vx = 0; rk.vy = 0; rk.landed = true; }
+      kept.push(rk); // big rocks land in-arena; never culled
+      continue;
+    }
+    if (rk.hit) continue; // small rock spent on impact
+    const m = 30;
+    if (rk.x < -m || rk.x > CFG.arenaW + m || rk.y < -m || rk.y > CFG.arenaH + m) continue;
+    kept.push(rk);
+  }
+  s.rocks = kept;
 }
 
 // Advance arrows, resolve boss hits, and cull anything that leaves the arena.
@@ -131,6 +195,8 @@ function _arrowsUpdate(s, dt) {
       if (b.hp <= 0) s.over = "won";
       continue; // arrow consumed on hit
     }
+    // landed boulders block shots (cover for the golem)
+    if (s.rocks.some((rk) => rk.landed && dist(a, rk) <= rk.r + CFG.arrowR)) continue;
     const m = 24;
     if (a.x < -m || a.x > CFG.arenaW + m || a.y < -m || a.y > CFG.arenaH + m) continue;
     kept.push(a);
@@ -138,47 +204,131 @@ function _arrowsUpdate(s, dt) {
   s.arrows = kept;
 }
 
+// Rotate through all five patterns in a fixed, learnable order. Smash needs the
+// player in melee reach, so when it comes up at range the golem dashes in
+// instead (and smashes next time) — that way the ranged kit still cycles
+// regularly instead of being starved by a golem that's always closing in.
+function _chooseAttack(b, d) {
+  const seq = ["dash", "smash", "bigrock", "scatter", "quake"];
+  const a = seq[b.atkCycle++ % seq.length];
+  return a === "smash" && d > CFG.slamR ? "dash" : a;
+}
+
+// Begin an attack: enter windup and set up its telegraph data.
+function _bossBeginAttack(s, d) {
+  const p = s.player, b = s.boss;
+  b.attack = _chooseAttack(b, d);
+  b.state = "windup";
+  switch (b.attack) {
+    case "smash":
+      b.t = CFG.windup;
+      b.slam = { x: b.x, y: b.y, active: true }; // ring centered on the golem
+      break;
+    case "dash": {
+      b.t = CFG.dashWindup;
+      const u = unit(sub(p, b)); // lock the lunge direction now
+      b.dash = { dx: u.x, dy: u.y, active: false, hit: false };
+      break;
+    }
+    case "bigrock":  b.t = CFG.bigRockWindup; break;
+    case "scatter":  b.t = CFG.scatterWindup; break;
+    case "quake":    b.t = CFG.quakeWindup; b.quake = { active: false }; break;
+  }
+}
+
+// Windup -> strike: spawn projectiles / resolve instantaneous hits.
+function _bossActivate(s) {
+  const p = s.player, b = s.boss;
+  b.state = "strike";
+  switch (b.attack) {
+    case "smash":
+      b.t = CFG.strike;
+      if (dist(p, b.slam) <= CFG.slamR) _hitPlayer(s, CFG.bossDmg);
+      break;
+    case "dash":
+      b.t = CFG.dashTime;
+      b.dash.active = true; b.dash.hit = false;
+      break;
+    case "bigrock": {
+      b.t = 0.12; // brief throw pose; the rock lives in s.rocks
+      const u = unit(sub(p, b));
+      // Lobbed at the player's current spot; it lands there and stays as a
+      // solid boulder obstacle (travel = distance it covers before landing).
+      s.rocks.push({
+        x: b.x, y: b.y, vx: u.x * CFG.bigRockSpeed, vy: u.y * CFG.bigRockSpeed,
+        r: CFG.bigRockR, dmg: CFG.bigRockDmg, big: true,
+        tx: p.x, ty: p.y, travel: dist(b, p), landed: false, hit: false,
+      });
+      break;
+    }
+    case "scatter": {
+      b.t = 0.12;
+      for (let k = 0; k < CFG.scatterCount; k++) {
+        const a = (k / CFG.scatterCount) * Math.PI * 2;
+        s.rocks.push({
+          x: b.x, y: b.y, vx: Math.cos(a) * CFG.smallRockSpeed, vy: Math.sin(a) * CFG.smallRockSpeed,
+          r: CFG.smallRockR, dmg: CFG.smallRockDmg, big: false,
+        });
+      }
+      break;
+    }
+    case "quake":
+      b.t = CFG.quakeActive;
+      b.quake.active = true;
+      _hitPlayer(s, CFG.quakeDmg); // arena-wide: only i-frames avoid it
+      break;
+  }
+}
+
+// Per-frame behavior while an attack is "active" (currently only the dash moves
+// the golem and deals contact damage once).
+function _bossStrikeTick(s, dt) {
+  const p = s.player, b = s.boss;
+  if (b.attack === "dash" && b.dash.active) {
+    b.x = clamp(b.x + b.dash.dx * CFG.dashSpeed * dt, b.r, CFG.arenaW - b.r);
+    b.y = clamp(b.y + b.dash.dy * CFG.dashSpeed * dt, b.r, CFG.arenaH - b.r);
+    if (!b.dash.hit && dist(p, b) <= b.r + p.r) { b.dash.hit = true; _hitPlayer(s, CFG.dashDmg); }
+  }
+}
+
+function _recoverFor(attack) {
+  switch (attack) {
+    case "dash":    return CFG.dashRecover;
+    case "bigrock": return CFG.rockRecover;
+    case "scatter": return CFG.scatterRecover;
+    case "quake":   return CFG.quakeRecover;
+    default:        return CFG.recover;
+  }
+}
+
 function _bossUpdate(s, dt) {
   const p = s.player, b = s.boss;
-  const to = sub(p, b);
-  const d = len(to);
+  const d = len(sub(p, b));
 
   switch (b.state) {
     case "idle": {
       if (d > CFG.meleeRange) {
-        const u = unit(to);
+        const u = unit(sub(p, b));
         b.x += u.x * CFG.bossSpeed * dt;
         b.y += u.y * CFG.bossSpeed * dt;
       }
       b.cd -= dt;
-      // Smash only once the player is actually within the shockwave reach, so
-      // the golem closes in first instead of slamming at empty air.
-      if (b.cd <= 0 && d <= CFG.slamR) {
-        b.state = "windup";
-        b.t = CFG.windup;
-        b.slam = { x: b.x, y: b.y, active: true }; // centered on the golem itself
-      }
+      if (b.cd <= 0) _bossBeginAttack(s, d);
       break;
     }
     case "windup": {
       b.t -= dt;
-      if (b.t <= 0) {
-        b.state = "strike";
-        b.t = CFG.strike;
-        // Resolve the slam: did the player leave the ring (or dodge/i-frame it)?
-        if (dist(p, b.slam) <= CFG.slamR && p.invuln <= 0) {
-          const dmg = damageTaken(CFG.bossDmg, p.def);
-          p.hp = Math.max(0, p.hp - dmg);
-          p.lastHit = dmg;
-          p.invuln = CFG.hitInvuln;
-          if (p.hp <= 0) s.over = "lost";
-        }
-      }
+      if (b.t <= 0) _bossActivate(s);
       break;
     }
     case "strike": {
+      _bossStrikeTick(s, dt);
       b.t -= dt;
-      if (b.t <= 0) { b.state = "recover"; b.t = CFG.recover; b.slam.active = false; }
+      if (b.t <= 0) {
+        b.state = "recover";
+        b.t = _recoverFor(b.attack);
+        b.slam.active = false; b.dash.active = false; b.quake.active = false;
+      }
       break;
     }
     case "recover": {
