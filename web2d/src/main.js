@@ -1,7 +1,8 @@
 // Canvas rendering + input for Bossraid 2D. All rules live in game.js (unit-
 // tested); this is the thin "view" layer: keyboard + on-screen touch controls.
 
-import { createGame, step, emptyInput, CFG } from "./game.js";
+import { createGame, deriveCombat, step, emptyInput, CFG } from "./game.js";
+import { statSheet } from "./stats.js";
 import { stickVector, knobOffset, pointInCircle } from "./touch.js";
 import { Animator, frameIndex, clipDuration } from "./anim.js";
 import { loadStrip, drawStrip } from "./sprites.js";
@@ -56,6 +57,20 @@ function grantReward() {
   const xp = Math.round(dealt / 5) + (game.over === "won" ? 150 : 0);
   game._levelsGained = rpg.addXp(profile, xp);
   game._xpGained = xp;
+  rpg.save(profile);
+}
+
+let pauseTab = "character";
+// Re-derive the live player's combat fields after a pause-menu change (spend a
+// point / equip gear), preserving current HP and adding any max-HP gain.
+function reapplyProfile() {
+  const c = deriveCombat(rpg.gameOptsFromProfile(profile));
+  const pl = game.player, dHp = c.maxHp - pl.maxHp;
+  Object.assign(pl, {
+    str: c.str, dex: c.dex, con: c.con, def: c.def, bowDmg: c.bowDmg, speed: c.speed,
+    dodgeIframes: c.dodgeIframes, heavyBaseMult: c.heavyBaseMult, rangedVBonus: c.rangedVBonus,
+    maxHp: c.maxHp, hp: Math.min(c.maxHp, pl.hp + Math.max(0, dHp)),
+  });
   rpg.save(profile);
 }
 
@@ -324,8 +339,10 @@ function toCanvas(e) {
 function onDown(e) {
   e.preventDefault();
   const p = toCanvas(e);
-  // menu screens (and the game-over overlay) are click-driven UI
+  // menu screens, pause and the game-over overlay are click-driven UI
   if (scene !== "playing" || game.over) { handleUiClick(p.x, p.y); return; }
+  // the on-canvas pause button (registered each frame during play)
+  if (uiHit(p.x, p.y) === "pauseBtn") { scene = "paused"; return; }
   // buttons first (right side)
   for (const b of BTN) {
     if (pointInCircle(p.x, p.y, b.cx, b.cy, b.r)) {
@@ -374,11 +391,17 @@ const REMAP = { Space: 1, ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1 
 addEventListener("keydown", (e) => { keys.add(e.code); if (REMAP[e.code]) e.preventDefault(); });
 // Enter/Space advances the menu screens (click/tap also works).
 addEventListener("keydown", (e) => {
-  if (scene === "playing" || (e.code !== "Enter" && e.code !== "Space")) return;
+  if (scene === "playing" || scene === "paused" || (e.code !== "Enter" && e.code !== "Space")) return;
   if (scene === "menu") scene = "charSelect";
   else if (scene === "charSelect") scene = "bossSelect";
   else if (scene === "bossSelect") startFight();
   e.preventDefault();
+});
+// Esc / P toggles pause during a fight.
+addEventListener("keydown", (e) => {
+  if (e.code !== "Escape" && e.code !== "KeyP") return;
+  if (scene === "playing" && !game.over) scene = "paused";
+  else if (scene === "paused") scene = "playing";
 });
 addEventListener("keyup", (e) => keys.delete(e.code));
 
@@ -480,10 +503,98 @@ function renderScene() {
   else if (scene === "bossSelect") renderBossSelect();
 }
 
+// --- pause menu + RPG panels ------------------------------------------------
+const PAUSE_TABS = [["character", "Character"], ["stats", "Stats"], ["skills", "Skills"], ["inventory", "Inventory"], ["level", "Level"]];
+
+function renderPause() {
+  render(); // the frozen fight underneath
+  ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
+  dim(ctx, W, H, 0.55);
+  uiBegin();
+  const px = 110, py = 64, pw = W - 220, ph = H - 128;
+  panel(ctx, px, py, pw, ph, "PAUSED");
+  const tw = 128, gap = 6, ty = py + 50;
+  PAUSE_TABS.forEach(([id, lbl], i) =>
+    uiButton(ctx, "tab_" + id, lbl, px + 18 + i * (tw + gap), ty, tw, 38, { active: pauseTab === id, font: 15 }));
+  drawPauseTab(px + 24, ty + 60, pw - 48);
+  uiButton(ctx, "resume", "Resume", px + pw - 332, py + ph - 56, 150, 42, { accent: "#2f7a4f" });
+  uiButton(ctx, "quit", "Quit to Menu", px + pw - 172, py + ph - 56, 154, 42);
+}
+
+function drawPauseTab(x, y, w) {
+  const p = profile;
+  ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+  if (pauseTab === "character") {
+    if (ARCHER.idle.ok) drawStrip(ctx, ARCHER.idle, 0, x + 90, y + 200, 230, false);
+    label(ctx, "Archer", x + 200, y + 30, { size: 26, bold: true, align: "left", color: "#eaf0ff" });
+    label(ctx, `Level ${p.level}`, x + 200, y + 62, { size: 18, align: "left", color: "#cfe0ff" });
+    const eq = rpg.equippedStats(p);
+    const lines = [
+      `Bow:   ${rpg.BOWS.find((b) => b.id === p.equip.bow).name}`,
+      `Armor: ${rpg.ARMORS.find((a) => a.id === p.equip.armor).name}`,
+      `Boots: ${rpg.BOOTS.find((b) => b.id === p.equip.boots).name}`,
+      `DEF ${eq.def}   ·   Bow dmg ${eq.bowDmg}`,
+    ];
+    lines.forEach((t, i) => label(ctx, t, x + 200, y + 104 + i * 30, { size: 16, align: "left", color: "#b9c6df" }));
+  } else if (pauseTab === "stats") {
+    const s = statSheet(p.str, p.dex, p.con, 50, 0, rpg.equippedStats(p).def, rpg.equippedStats(p).bowDmg);
+    const rows = [
+      `STR ${s.STR}`, `DEX ${s.DEX}`, `CON ${s.CON}`,
+      `Max HP ${s.maxHealth}`, `DEF ${s.effectiveDEF}`,
+      `Arrow impact ${s.arrowImpact}`, `Arrow v0 ${s.arrowV0.toFixed(1)}`,
+      `Charged ×${s.heavyMult.toFixed(2)}`, `Stamina ${CFG.staminaMax}`,
+    ];
+    rows.forEach((t, i) => label(ctx, t, x + (i % 2) * (w / 2), y + 24 + Math.floor(i / 2) * 34, { size: 18, align: "left", color: "#dbe6fb" }));
+  } else if (pauseTab === "skills") {
+    label(ctx, `Skill points: ${p.skillPts}`, x, y, { size: 16, align: "left", color: "#cfe0ff", bold: true });
+    rpg.SKILLS.forEach((sk, i) => {
+      const ry = y + 28 + i * 64;
+      label(ctx, `${sk.name}  (${p.skills[sk.id]}/${rpg.SKILL_MAX})`, x, ry + 18, { size: 18, align: "left", color: "#eaf0ff" });
+      label(ctx, sk.desc, x, ry + 40, { size: 13, align: "left", color: "#93a1bd" });
+      const can = p.skillPts > 0 && p.skills[sk.id] < rpg.SKILL_MAX;
+      uiButton(ctx, "skill_" + sk.id, "+", x + w - 60, ry, 52, 46, { enabled: can, accent: "#345b86" });
+    });
+  } else if (pauseTab === "inventory") {
+    const slots = [["bow", rpg.BOWS], ["armor", rpg.ARMORS], ["boots", rpg.BOOTS]];
+    let ry = y;
+    slots.forEach(([slot, list]) => {
+      label(ctx, slot.toUpperCase(), x, ry + 16, { size: 14, align: "left", color: "#9fb3d6", bold: true });
+      list.forEach((it, i) => {
+        const bx = x + 90 + i * 180, owned = p.owned.includes(it.id), on = p.equip[slot] === it.id;
+        const can = owned && rpg.canEquip(p, it);
+        uiButton(ctx, "equip_" + slot + "_" + it.id, it.name.replace(/^.*? /, ""), bx, ry - 6, 170, 40,
+          { active: on, enabled: can, font: 13, accent: owned ? "#2a3346" : "#1b2030" });
+        if (!owned) label(ctx, "locked", bx + 85, ry + 30, { size: 11, color: "#5a6478" });
+        else if (!rpg.canEquip(p, it)) label(ctx, `STR ${it.strReq}`, bx + 85, ry + 30, { size: 11, color: "#c98" });
+      });
+      ry += 70;
+    });
+  } else if (pauseTab === "level") {
+    label(ctx, `Level ${p.level}`, x, y + 6, { size: 22, bold: true, align: "left", color: "#eaf0ff" });
+    label(ctx, `XP ${p.xp} / ${rpg.xpToNext(p.level)}`, x + 160, y + 6, { size: 16, align: "left", color: "#9fb3d6" });
+    label(ctx, `Stat points: ${p.statPts}`, x, y + 44, { size: 16, align: "left", color: "#cfe0ff", bold: true });
+    [["str", "STR", p.str], ["dex", "DEX", p.dex], ["con", "CON", p.con]].forEach(([k, lbl, v], i) => {
+      const ry = y + 70 + i * 56;
+      label(ctx, `${lbl}  ${v}`, x, ry + 30, { size: 20, align: "left", color: "#eaf0ff" });
+      uiButton(ctx, "stat_" + k, "+", x + 180, ry, 52, 46, { enabled: p.statPts > 0, accent: "#2f7a4f" });
+    });
+    label(ctx, "CON raises max HP · STR/DEX raise damage", x, y + 70 + 3 * 56 + 6, { size: 13, align: "left", color: "#93a1bd" });
+  }
+}
+
 // Route a menu/game-over click to its action (regions registered last render).
 function handleUiClick(x, y) {
   const id = uiHit(x, y);
   if (!id) return;
+  if (scene === "paused") {
+    if (id === "resume") scene = "playing";
+    else if (id === "quit") scene = "menu";
+    else if (id.startsWith("tab_")) pauseTab = id.slice(4);
+    else if (id.startsWith("stat_")) { rpg.spendStat(profile, id.slice(5)); reapplyProfile(); }
+    else if (id.startsWith("skill_")) { rpg.rankUp(profile, id.slice(6)); reapplyProfile(); }
+    else if (id.startsWith("equip_")) { const [, slot, item] = id.split("_"); rpg.equip(profile, slot, item); reapplyProfile(); }
+    return;
+  }
   if (game.over) {
     if (id === "retry") startFight();
     else if (id === "menu") scene = "menu";
@@ -517,6 +628,8 @@ function frame(now) {
     updatePlayerAnimSignals(dt); playerAnim.play(playerClip()); playerAnim.tick(dt);
     updateFxTriggers(dt); tickEffects(dt);
     render();
+  } else if (scene === "paused") {
+    renderPause();
   } else {
     renderScene();
   }
@@ -716,6 +829,12 @@ function render() {
   for (let i = 1; i < CFG.phases; i++) {
     const x = bossX + (bossW * i) / CFG.phases;
     ctx.beginPath(); ctx.moveTo(x, 20); ctx.lineTo(x, 38); ctx.stroke();
+  }
+
+  // on-canvas pause button (touch + mouse); cleared when paused/over
+  if (!game.over) {
+    uiBegin();
+    uiButton(ctx, "pauseBtn", "⏸", bossX - 52, 19, 40, 30, { accent: "rgba(30,36,50,0.8)", font: 16 });
   }
 
   if (TOUCH) drawControls();
