@@ -97,6 +97,36 @@ const FX = {
 };
 const effects = []; // { name, x, y, t, scale }
 function spawnFx(name, x, y, scale = 1) { effects.push({ name, x, y, t: 0, scale }); }
+let shakeT = 0; // seconds of screen-shake remaining (earthquake)
+
+// Arena floor texture (optional). Falls back to a procedural stone floor so the
+// arena always has a ground, even before art is dropped in.
+const floorImg = new Image();
+let floorOk = false;
+floorImg.onload = () => { floorOk = floorImg.naturalWidth > 0; };
+floorImg.onerror = () => { floorOk = false; };
+floorImg.src = "./assets/arena_floor.png";
+
+function drawFloor() {
+  if (floorOk) {
+    const tw = floorImg.naturalWidth, th = floorImg.naturalHeight;
+    for (let y = -th; y < H + th; y += th) for (let x = -tw; x < W + tw; x += tw) ctx.drawImage(floorImg, x, y);
+  } else {
+    ctx.fillStyle = "#15140f";
+    ctx.fillRect(-24, -24, W + 48, H + 48);
+    const T = 84;
+    for (let ty = -24; ty < H + 24; ty += T) for (let tx = -24; tx < W + 24; tx += T) {
+      const n = (((tx * 73856093) ^ (ty * 19349663)) >>> 0) % 12;
+      ctx.fillStyle = `rgb(${26 + n},${24 + n},${19 + n})`;
+      ctx.fillRect(tx + 1, ty + 1, T - 2, T - 2);
+    }
+  }
+  const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.25, W / 2, H / 2, H * 0.88);
+  g.addColorStop(0, "rgba(0,0,0,0)");
+  g.addColorStop(1, "rgba(0,0,0,0.55)");
+  ctx.fillStyle = g;
+  ctx.fillRect(-24, -24, W + 48, H + 48);
+}
 
 // Fire effects off game events (view-only). WeakSets mark rocks/arrows already
 // handled so each boulder shatter / charged-shot burst plays exactly once.
@@ -108,8 +138,15 @@ function updateFxTriggers() {
   if (b.state === "strike" && prevBossStateFx !== "strike") {
     if (b.attack === "smash") spawnFx("shockwave", b.slam.x, b.slam.y, 1);
     else if (b.attack === "dash") spawnFx("dust", b.x, b.y + b.r * 0.4, 1);
-    else if (b.attack === "quake") spawnFx("quakecrack", b.x, b.y + b.r * 0.4, 1.4);
     else if (b.attack === "scatter") spawnFx("dust", b.x, b.y, 0.7);
+    else if (b.attack === "quake") {
+      // earthquake hits the whole arena: shake + cracks scattered everywhere
+      shakeT = 0.55;
+      spawnFx("quakecrack", b.x, b.y + b.r * 0.4, 1.5);
+      for (let k = 0; k < 6; k++) {
+        spawnFx("quakecrack", 110 + Math.random() * (W - 220), 110 + Math.random() * (H - 220), 0.7 + Math.random() * 0.7);
+      }
+    }
   }
   prevBossStateFx = b.state;
   if (prevBossHpFx !== null && b.hp < prevBossHpFx && b.hp > 0) {
@@ -121,6 +158,7 @@ function updateFxTriggers() {
 }
 
 function tickEffects(dt) {
+  if (shakeT > 0) shakeT = Math.max(0, shakeT - dt);
   for (const e of effects) e.t += dt;
   for (let i = effects.length - 1; i >= 0; i--) {
     const st = FX[effects[i].name].strip;
@@ -325,56 +363,75 @@ requestAnimationFrame(frame);
 function render() {
   const p = game.player, b = game.boss;
 
-  ctx.fillStyle = "#11141c";
-  ctx.fillRect(0, 0, W, H);
-  ctx.strokeStyle = "#2b3346";
-  ctx.lineWidth = 4;
-  ctx.strokeRect(2, 2, W - 4, H - 4);
+  // Screen-shake offset (earthquake). Wrap the whole playfield so the floor,
+  // characters and FX shake together; the border + HUD are drawn after restore.
+  const sh = shakeT > 0 ? Math.min(1, shakeT / 0.55) : 0;
+  const ox = sh ? (Math.random() * 2 - 1) * sh * 13 : 0;
+  const oy = sh ? (Math.random() * 2 - 1) * sh * 13 : 0;
+  ctx.save();
+  ctx.translate(ox, oy);
 
-  // slam danger zone — a ring on the ground AROUND the golem that matches the
-  // smash animation. The ring IS the hitbox: windup charges it red, the strike
-  // flashes it. Drawn before the boss so it reads as on the ground beneath it.
+  drawFloor();
+
+  // smash danger zone — a ground decal AROUND the golem (the ring IS the hitbox).
+  // windup: gradient pool + a shrinking inner ring counting down to impact.
   if (b.slam.active) {
     const cx = b.slam.x, cy = b.slam.y, R = CFG.slamR;
     if (b.state === "windup") {
-      const k = 1 - b.t / CFG.windup; // 0 -> 1 as the smash charges
-      ctx.fillStyle = `rgba(230,60,50,${0.05 + 0.16 * k})`;
-      circle(cx, cy, R, true, false);
-      ctx.strokeStyle = `rgba(255,90,70,${0.45 + 0.55 * k})`;
-      ctx.lineWidth = 3 + 4 * k;
-      ctx.setLineDash([16, 12]);
-      circle(cx, cy, R, false, true);
-      ctx.setLineDash([]);
+      const k = 1 - b.t / CFG.windup;
+      const g = ctx.createRadialGradient(cx, cy, R * 0.15, cx, cy, R);
+      g.addColorStop(0, `rgba(255,140,70,${0.06 + 0.10 * k})`);
+      g.addColorStop(0.75, `rgba(235,80,55,${0.10 + 0.20 * k})`);
+      g.addColorStop(1, "rgba(210,50,45,0)");
+      ctx.fillStyle = g; circle(cx, cy, R, true, false);
+      ctx.strokeStyle = `rgba(255,100,75,${0.5 + 0.4 * k})`; ctx.lineWidth = 3; circle(cx, cy, R, false, true);
+      ctx.strokeStyle = `rgba(255,210,150,${0.2 + 0.7 * k})`; ctx.lineWidth = 4; circle(cx, cy, Math.max(2, R * (1 - k)), false, true);
     } else if (b.state === "strike") {
-      ctx.fillStyle = "rgba(255,150,70,0.5)";
-      circle(cx, cy, R, true, false);
-      ctx.strokeStyle = "rgba(255,220,140,1)";
-      ctx.lineWidth = 7;
-      circle(cx, cy, R, false, true);
+      const g = ctx.createRadialGradient(cx, cy, R * 0.1, cx, cy, R);
+      g.addColorStop(0, "rgba(255,235,180,0.6)");
+      g.addColorStop(1, "rgba(255,150,70,0)");
+      ctx.fillStyle = g; circle(cx, cy, R, true, false);
+      ctx.strokeStyle = "rgba(255,230,160,0.95)"; ctx.lineWidth = 6; circle(cx, cy, R, false, true);
     }
   }
 
-  // dash-charge telegraph — a lane showing the locked lunge direction.
+  // dash-charge telegraph — a tapered danger lane with chevrons sliding along
+  // the locked lunge direction.
   if (b.attack === "dash" && b.state === "windup") {
     const k = 1 - b.t / CFG.dashWindup;
     ctx.save();
     ctx.translate(b.x, b.y);
     ctx.rotate(Math.atan2(b.dash.dy, b.dash.dx));
-    ctx.fillStyle = `rgba(255,90,70,${0.10 + 0.28 * k})`;
-    ctx.fillRect(0, -24, 240, 48);
+    const L = 250, w = 48;
+    const g = ctx.createLinearGradient(0, 0, L, 0);
+    g.addColorStop(0, `rgba(255,120,75,${0.12 + 0.28 * k})`);
+    g.addColorStop(1, "rgba(255,120,75,0)");
+    ctx.fillStyle = g; ctx.fillRect(0, -w / 2, L, w);
+    ctx.strokeStyle = `rgba(255,205,150,${0.35 + 0.5 * k})`; ctx.lineWidth = 5; ctx.lineCap = "round";
+    const adv = (k * 50) % 56;
+    for (let i = 0; i < 4; i++) {
+      const x = 22 + i * 56 + adv;
+      if (x > L - 12) continue;
+      ctx.beginPath(); ctx.moveTo(x, -15); ctx.lineTo(x + 16, 0); ctx.lineTo(x, 15); ctx.stroke();
+    }
+    ctx.lineCap = "butt";
     ctx.restore();
   }
 
-  // earthquake telegraph — pulsing red border on windup, full flash on impact.
+  // earthquake telegraph — a full-arena red vignette + pulsing border on windup,
+  // an orange flash on impact (paired with screen-shake + scattered cracks).
   if (b.attack === "quake") {
     if (b.state === "windup") {
       const k = 1 - b.t / CFG.quakeWindup;
-      ctx.strokeStyle = `rgba(255,80,60,${0.25 + 0.6 * k})`;
-      ctx.lineWidth = 6 + 26 * k;
-      ctx.strokeRect(10, 10, W - 20, H - 20);
+      const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.25, W / 2, H / 2, H * 0.9);
+      g.addColorStop(0, "rgba(0,0,0,0)");
+      g.addColorStop(1, `rgba(200,45,35,${0.12 + 0.32 * k})`);
+      ctx.fillStyle = g; ctx.fillRect(-24, -24, W + 48, H + 48);
+      const pulse = 0.5 + 0.5 * Math.sin(game.t * 22);
+      ctx.strokeStyle = `rgba(255,90,65,${(0.25 + 0.5 * k) * (0.5 + 0.5 * pulse)})`;
+      ctx.lineWidth = 5 + 18 * k; ctx.strokeRect(14, 14, W - 28, H - 28);
     } else if (b.state === "strike" && b.quake.active) {
-      ctx.fillStyle = "rgba(255,120,70,0.4)";
-      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = "rgba(255,150,90,0.22)"; ctx.fillRect(-24, -24, W + 48, H + 48);
     }
   }
 
@@ -391,19 +448,26 @@ function render() {
     ctx.fillText("GOLEM", b.x, b.y + 6);
   }
 
-  // boss rocks: scatter pellets, the flying big rock, and landed boulders that
-  // persist as solid obstacles.
+  // boss rocks: scatter pellets, the flying big rock, and landed boulders.
+  // Drawn as real stone (interim: the intact frame of the rock-shatter sheet;
+  // swaps to the dedicated rock art when it lands), with a circle fallback.
+  const rockStrip = FX.rockshatter.strip;
   for (const rk of game.rocks) {
     if (rk.landed) {
-      ctx.fillStyle = "rgba(0,0,0,0.35)"; // grounded shadow
+      ctx.fillStyle = "rgba(0,0,0,0.4)"; // grounded shadow
       ctx.beginPath();
-      ctx.ellipse(rk.x, rk.y + rk.r * 0.7, rk.r * 1.1, rk.r * 0.45, 0, 0, Math.PI * 2);
+      ctx.ellipse(rk.x, rk.y + rk.r * 0.75, rk.r * 1.25, rk.r * 0.5, 0, 0, Math.PI * 2);
       ctx.fill();
     }
-    ctx.fillStyle = rk.landed ? "#6b5c47" : rk.big ? "#7c6b54" : "#8a8170";
-    ctx.strokeStyle = "rgba(20,16,12,0.7)";
-    ctx.lineWidth = rk.landed ? 4 : 3;
-    circle(rk.x, rk.y, rk.r, true, true);
+    const size = rk.r * (rk.landed ? 3.1 : rk.big ? 2.8 : 2.6);
+    const drew = rockStrip && rockStrip.ok &&
+      drawStrip(ctx, rockStrip, 0, rk.x, rk.y + size / 2, size, false);
+    if (!drew) {
+      ctx.fillStyle = rk.landed ? "#6b5c47" : rk.big ? "#7c6b54" : "#8a8170";
+      ctx.strokeStyle = "rgba(20,16,12,0.7)";
+      ctx.lineWidth = rk.landed ? 4 : 3;
+      circle(rk.x, rk.y, rk.r, true, true);
+    }
   }
 
   // arrows in flight (drawn under the characters)
@@ -442,6 +506,13 @@ function render() {
 
   // one-shot VFX, layered over the action
   drawEffects();
+
+  ctx.restore(); // end screen-shake transform
+
+  // arena border (drawn un-shaken, over the playfield)
+  ctx.strokeStyle = "#2b3346";
+  ctx.lineWidth = 4;
+  ctx.strokeRect(2, 2, W - 4, H - 4);
 
   // HUD bars
   bar(20, 20, 300, 18, p.hp / p.maxHp, "#37d35a", `HP ${Math.ceil(p.hp)}/${p.maxHp}`);
