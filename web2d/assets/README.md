@@ -1,8 +1,9 @@
-# Boss sprite art — drop-in spec
+# Sprite art — drop-in spec
 
 The game loads each animation as **one transparent PNG strip** from this folder.
 Drop a file in with the exact name below and it animates automatically; until a
-file exists, the boss falls back to a placeholder circle (the game still runs).
+file exists, the character falls back to a placeholder circle (the game still
+runs). This covers both the **golem** boss and the **archer** player.
 
 ## Format every strip must follow
 - **Transparent background** (PNG with alpha). No parchment, labels, or borders.
@@ -24,15 +25,24 @@ file exists, the boss falls back to a placeholder circle (the game still runs).
 | `golem_slam.png`  | 10 | 14 | no  |
 | `golem_hit.png`   | 4  | 16 | no  |
 | `golem_death.png` | 6  | 9  | no  |
+| `archer_idle.png`  | 6 | 8  | yes |
+| `archer_walk.png`  | 8 | 11 | yes |
+| `archer_shoot.png` | 6 | 16 | no  |
+| `archer_hit.png`   | 4 | 16 | no  |
+| `archer_death.png` | 6 | 9  | no  |
+| `archer_dodge.png` | 6 | 18 | no  |
 
-(Frame counts match the packed strips. FPS is tunable in `src/main.js` → `GOLEM`.)
+(Frame counts match the packed strips. FPS is tunable in `src/main.js` →
+`GOLEM` / `ARCHER`.)
 
 ## How these PNGs are produced
-The five strips here are **generated**, not hand-placed. The raw ChatGPT art
-lives in `web2d/art-src/golem_*.src.png` (a white-background grid of frames);
+The strips here are **generated**, not hand-placed. The raw ChatGPT art lives in
+`web2d/art-src/<name>_*.src.png` (a white-background grid of frames);
 `npm run pack-sprites` (see `web2d/tools/pack-sprites.mjs`) keys out the white
 background, trims each frame, and repacks them into the uniform 512-tall,
-single-row strips above. Re-run it whenever the source art is regenerated.
+single-row strips above. It packs every character listed in the script's
+`CHARACTERS` table (currently `golem` + `archer`). Re-run it whenever the source
+art is regenerated.
 
 ## Start with just one — the idle proof
 Generate **`golem_idle.png`** only: a 6-frame transparent strip, e.g.

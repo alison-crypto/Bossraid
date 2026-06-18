@@ -23,14 +23,31 @@ const FIT_W = CELL * 0.98;   // widest frame may use almost the full cell width
 const FIT_H = CELL * 0.86;   // tallest frame fits this (leaves head/foot padding)
 const FOOT_MARGIN = Math.round(CELL * 0.06); // gap below feet baseline
 
-// name -> source layout. cols = frames / rows; frame order is row-major
-// (top row left->right, then next row), matching how the sheets read.
-const JOBS = [
-  { name: "idle",  frames: 6,  rows: 1 },
-  { name: "walk",  frames: 8,  rows: 1 },
-  { name: "slam",  frames: 10, rows: 2 },
-  { name: "hit",   frames: 4,  rows: 1 },
-  { name: "death", frames: 6,  rows: 1 },
+// prefix -> its clips. cols = frames / rows; frame order is row-major (top row
+// left->right, then next row), matching how the sheets read. Each clip reads
+// art-src/<prefix>_<name>.src.png and writes assets/<prefix>_<name>.png.
+const CHARACTERS = [
+  {
+    prefix: "golem",
+    jobs: [
+      { name: "idle",  frames: 6,  rows: 1 },
+      { name: "walk",  frames: 8,  rows: 1 },
+      { name: "slam",  frames: 10, rows: 2 },
+      { name: "hit",   frames: 4,  rows: 1 },
+      { name: "death", frames: 6,  rows: 1 },
+    ],
+  },
+  {
+    prefix: "archer",
+    jobs: [
+      { name: "idle",  frames: 6, rows: 1 },
+      { name: "walk",  frames: 8, rows: 1 },
+      { name: "shoot", frames: 6, rows: 1 },
+      { name: "hit",   frames: 4, rows: 1 },
+      { name: "death", frames: 6, rows: 1 },
+      { name: "dodge", frames: 6, rows: 1 },
+    ],
+  },
 ];
 
 const idx = (w, x, y) => (y * w + x) * 4;
@@ -148,8 +165,8 @@ function sample(png, fx, fy, out) {
   return out;
 }
 
-function packOne(job) {
-  const src = PNG.sync.read(readFileSync(join(SRC_DIR, `golem_${job.name}.src.png`)));
+function packOne(prefix, job) {
+  const src = PNG.sync.read(readFileSync(join(SRC_DIR, `${prefix}_${job.name}.src.png`)));
   keyOutBackground(src); // RGB white bg -> transparent before trimming
   const cols = job.frames / job.rows;
   if (!Number.isInteger(cols)) throw new Error(`${job.name}: frames/rows not integer`);
@@ -194,14 +211,14 @@ function packOne(job) {
     }
   });
 
-  const outPath = join(OUT_DIR, `golem_${job.name}.png`);
+  const outPath = join(OUT_DIR, `${prefix}_${job.name}.png`);
   writeFileSync(outPath, PNG.sync.write(out));
   const boxes = frames.map((f) => `${f.w}x${f.h}`).join(", ");
   console.log(
-    `golem_${job.name}.png  ${out.width}x${out.height}  (${job.frames} frames, ` +
+    `${prefix}_${job.name}.png  ${out.width}x${out.height}  (${job.frames} frames, ` +
     `scale ${scale.toFixed(3)})\n    src cells: ${boxes}`
   );
 }
 
-for (const job of JOBS) packOne(job);
+for (const { prefix, jobs } of CHARACTERS) for (const job of jobs) packOne(prefix, job);
 console.log("done.");
