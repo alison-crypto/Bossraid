@@ -84,6 +84,61 @@ const ARCHER = {
 };
 const playerAnim = new Animator();
 
+// --- one-shot VFX -----------------------------------------------------------
+// Center-anchored effect sprites played once at a point. `add` = additive blend
+// (for glows: impact spark, shockwave ring, rune burst). `h` = on-screen size.
+const FX = {
+  impact:      { strip: loadStrip("./assets/fx_impact.png", 5, 22, false),      h: 90,  add: true },
+  dust:        { strip: loadStrip("./assets/fx_dust.png", 6, 16, false),        h: 130, add: false },
+  shockwave:   { strip: loadStrip("./assets/fx_shockwave.png", 6, 18, false),   h: 280, add: true },
+  rockshatter: { strip: loadStrip("./assets/fx_rockshatter.png", 6, 16, false), h: 120, add: false },
+  quakecrack:  { strip: loadStrip("./assets/fx_quakecrack.png", 8, 16, false),  h: 360, add: false },
+  runeburst:   { strip: loadStrip("./assets/fx_runeburst.png", 6, 18, false),   h: 90,  add: true },
+};
+const effects = []; // { name, x, y, t, scale }
+function spawnFx(name, x, y, scale = 1) { effects.push({ name, x, y, t: 0, scale }); }
+
+// Fire effects off game events (view-only). WeakSets mark rocks/arrows already
+// handled so each boulder shatter / charged-shot burst plays exactly once.
+let prevBossStateFx = null, prevBossHpFx = null;
+const fxSeenRocks = new WeakSet();
+const fxSeenArrows = new WeakSet();
+function updateFxTriggers() {
+  const b = game.boss, p = game.player;
+  if (b.state === "strike" && prevBossStateFx !== "strike") {
+    if (b.attack === "smash") spawnFx("shockwave", b.slam.x, b.slam.y, 1);
+    else if (b.attack === "dash") spawnFx("dust", b.x, b.y + b.r * 0.4, 1);
+    else if (b.attack === "quake") spawnFx("quakecrack", b.x, b.y + b.r * 0.4, 1.4);
+    else if (b.attack === "scatter") spawnFx("dust", b.x, b.y, 0.7);
+  }
+  prevBossStateFx = b.state;
+  if (prevBossHpFx !== null && b.hp < prevBossHpFx && b.hp > 0) {
+    spawnFx("impact", b.x + (Math.random() * 40 - 20), b.y + (Math.random() * 30 - 15), 0.9);
+  }
+  prevBossHpFx = b.hp;
+  for (const rk of game.rocks) if (rk.landed && !fxSeenRocks.has(rk)) { fxSeenRocks.add(rk); spawnFx("rockshatter", rk.x, rk.y, 1); }
+  for (const a of game.arrows) if (a.heavy && !fxSeenArrows.has(a)) { fxSeenArrows.add(a); spawnFx("runeburst", a.x, a.y, 0.7); }
+}
+
+function tickEffects(dt) {
+  for (const e of effects) e.t += dt;
+  for (let i = effects.length - 1; i >= 0; i--) {
+    const st = FX[effects[i].name].strip;
+    if (effects[i].t >= clipDuration(st.fps, st.frames)) effects.splice(i, 1);
+  }
+}
+
+function drawEffects() {
+  for (const e of effects) {
+    const cfg = FX[e.name], st = cfg.strip;
+    const ix = frameIndex(e.t, st.fps, st.frames, false);
+    const targetH = cfg.h * e.scale;
+    if (cfg.add) ctx.globalCompositeOperation = "lighter";
+    drawStrip(ctx, st, ix, e.x, e.y + targetH / 2, targetH, false);
+    if (cfg.add) ctx.globalCompositeOperation = "source-over";
+  }
+}
+
 // View-only signals the sim doesn't expose directly: a brief flinch when the
 // boss takes damage, and whether it moved this frame (it chases in "idle").
 let bossHitT = 0;       // seconds left on the hit-react flinch
@@ -258,6 +313,9 @@ function frame(now) {
   playerAnim.play(playerClip());
   playerAnim.tick(dt);
 
+  updateFxTriggers();
+  tickEffects(dt);
+
   render();
   requestAnimationFrame(frame);
 }
@@ -381,6 +439,9 @@ function render() {
     ctx.lineTo(p.x + p.facing.x * (p.r + 10), p.y + p.facing.y * (p.r + 10));
     ctx.stroke();
   }
+
+  // one-shot VFX, layered over the action
+  drawEffects();
 
   // HUD bars
   bar(20, 20, 300, 18, p.hp / p.maxHp, "#37d35a", `HP ${Math.ceil(p.hp)}/${p.maxHp}`);
