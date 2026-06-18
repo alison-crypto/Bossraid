@@ -161,6 +161,35 @@ test("earthquake hits arena-wide unless dodged", () => {
   assert.equal(safe.player.hp, 100, "dodge i-frames avoid the quake");
 });
 
+test("a boulder stops the boss dash", () => {
+  const g = createGame();
+  g.boss.x = 300; g.boss.y = 300; g.player.x = 920; g.player.y = 300; g.player.invuln = 99;
+  g.rocks.push({ x: 460, y: 300, vx: 0, vy: 0, r: CFG.bigRockR, dmg: 0, big: true, tx: 460, ty: 300, travel: 0, landed: true, hit: true });
+  g.boss.attack = "dash"; g.boss.state = "strike"; g.boss.t = CFG.dashTime;
+  g.boss.dash = { dx: 1, dy: 0, active: true, hit: false };
+  for (let k = 0; k < 20 && g.boss.state === "strike"; k++) step(g, input(), 1 / 60);
+  assert.ok(g.boss.x <= 460 - (CFG.bossR + CFG.bigRockR) + 3, "boss did not charge through the boulder");
+});
+
+test("a boulder blocks the boss body while chasing", () => {
+  const g = createGame();
+  g.boss.x = 300; g.boss.y = 300; g.player.x = 640; g.player.y = 300; g.player.invuln = 99;
+  g.rocks.push({ x: 420, y: 300, vx: 0, vy: 0, r: CFG.bigRockR, dmg: 0, big: true, tx: 420, ty: 300, travel: 0, landed: true, hit: true });
+  g.boss.state = "idle"; g.boss.cd = 99; // keep chasing, never attack
+  for (let k = 0; k < 90; k++) step(g, input(), 1 / 60);
+  assert.ok(g.boss.x <= 420 - (CFG.bossR + CFG.bigRockR) + 4, "boss can't walk through the boulder");
+});
+
+test("a thrown rock is stopped by a boulder", () => {
+  const g = createGame();
+  g.player.x = 900; g.player.y = 300; g.player.invuln = 99;
+  g.boss.state = "recover"; g.boss.t = 99; // freeze the boss (no new rocks)
+  g.rocks.push({ x: 400, y: 300, vx: 0, vy: 0, r: CFG.bigRockR, dmg: 0, big: true, tx: 400, ty: 300, travel: 0, landed: true, hit: true });
+  g.rocks.push({ x: 360, y: 300, vx: 300, vy: 0, r: CFG.smallRockR, dmg: CFG.smallRockDmg, big: false, hit: false });
+  for (let k = 0; k < 30; k++) step(g, input(), 1 / 60);
+  assert.equal(g.rocks.filter((r) => !r.landed).length, 0, "scatter rock blocked by the boulder");
+});
+
 test("an arrow that brings boss hp to 0 ends the game as a win", () => {
   const g = createGame();
   g.player.x = 480; g.player.y = 300; g.player.facing = { x: 0, y: -1 };

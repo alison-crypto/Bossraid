@@ -99,6 +99,11 @@ const effects = []; // { name, x, y, t, scale }
 function spawnFx(name, x, y, scale = 1) { effects.push({ name, x, y, t: 0, scale }); }
 let shakeT = 0; // seconds of screen-shake remaining (earthquake)
 
+// rock props: frame 0 = boulder (big rock + landed obstacle), 1..3 = scatter pellets
+const ROCKS = loadStrip("./assets/rocks_set.png", 4, 1, false);
+const rockVariant = new WeakMap(); // stable pellet frame per scatter rock
+let dashDustT = 0; // throttles the dash dust trail
+
 // Arena floor texture (optional). Falls back to a procedural stone floor so the
 // arena always has a ground, even before art is dropped in.
 const floorImg = new Image();
@@ -130,14 +135,14 @@ function drawFloor() {
 
 // Fire effects off game events (view-only). WeakSets mark rocks/arrows already
 // handled so each boulder shatter / charged-shot burst plays exactly once.
-let prevBossStateFx = null, prevBossHpFx = null;
+let prevBossStateFx = null, prevBossHpFx = null, prevPlayerHpFx = null;
 const fxSeenRocks = new WeakSet();
 const fxSeenArrows = new WeakSet();
-function updateFxTriggers() {
+function updateFxTriggers(dt) {
   const b = game.boss, p = game.player;
   if (b.state === "strike" && prevBossStateFx !== "strike") {
     if (b.attack === "smash") spawnFx("shockwave", b.slam.x, b.slam.y, 1);
-    else if (b.attack === "dash") spawnFx("dust", b.x, b.y + b.r * 0.4, 1);
+    else if (b.attack === "dash") spawnFx("dust", b.x, b.y + b.r * 0.5, 1.3); // kick-off burst
     else if (b.attack === "scatter") spawnFx("dust", b.x, b.y, 0.7);
     else if (b.attack === "quake") {
       // earthquake hits the whole arena: shake + cracks scattered everywhere
@@ -149,10 +154,20 @@ function updateFxTriggers() {
     }
   }
   prevBossStateFx = b.state;
+
+  // dash dust trail — small puffs at the golem's feet while it charges
+  if (b.attack === "dash" && b.state === "strike" && b.dash.active) {
+    dashDustT -= dt;
+    if (dashDustT <= 0) { spawnFx("dust", b.x - b.dash.dx * 14, b.y + b.r * 0.5, 0.55); dashDustT = 0.04; }
+  } else dashDustT = 0;
+
   if (prevBossHpFx !== null && b.hp < prevBossHpFx && b.hp > 0) {
     spawnFx("impact", b.x + (Math.random() * 40 - 20), b.y + (Math.random() * 30 - 15), 0.9);
   }
   prevBossHpFx = b.hp;
+  if (prevPlayerHpFx !== null && p.hp < prevPlayerHpFx && p.hp > 0) spawnFx("dust", p.x, p.y, 0.6); // got hit
+  prevPlayerHpFx = p.hp;
+
   for (const rk of game.rocks) if (rk.landed && !fxSeenRocks.has(rk)) { fxSeenRocks.add(rk); spawnFx("rockshatter", rk.x, rk.y, 1); }
   for (const a of game.arrows) if (a.heavy && !fxSeenArrows.has(a)) { fxSeenArrows.add(a); spawnFx("runeburst", a.x, a.y, 0.7); }
 }
@@ -351,7 +366,7 @@ function frame(now) {
   playerAnim.play(playerClip());
   playerAnim.tick(dt);
 
-  updateFxTriggers();
+  updateFxTriggers(dt);
   tickEffects(dt);
 
   render();
@@ -435,6 +450,23 @@ function render() {
     }
   }
 
+  // dash motion streaks — speed lines trailing behind the charging golem
+  if (b.attack === "dash" && b.state === "strike" && b.dash.active) {
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(Math.atan2(b.dash.dy, b.dash.dx));
+    ctx.strokeStyle = "rgba(225,215,195,0.3)";
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    for (let i = 0; i < 6; i++) {
+      const yy = -42 + i * 17;
+      const ln = 36 + Math.random() * 46;
+      ctx.beginPath(); ctx.moveTo(-b.r, yy); ctx.lineTo(-b.r - ln, yy); ctx.stroke();
+    }
+    ctx.lineCap = "butt";
+    ctx.restore();
+  }
+
   // boss — animated sprite if its art is loaded, else the placeholder circle
   const clip = GOLEM[bossAnim.clip];
   const idx = clip ? frameIndex(bossAnim.t, clip.fps, clip.frames, clip.loop) : 0;
@@ -448,20 +480,23 @@ function render() {
     ctx.fillText("GOLEM", b.x, b.y + 6);
   }
 
-  // boss rocks: scatter pellets, the flying big rock, and landed boulders.
-  // Drawn as real stone (interim: the intact frame of the rock-shatter sheet;
-  // swaps to the dedicated rock art when it lands), with a circle fallback.
-  const rockStrip = FX.rockshatter.strip;
+  // boss rocks as real stone: boulder (frame 0) for the big rock + landed
+  // obstacle, a stable small-rock variant (frames 1–3) for scatter pellets.
   for (const rk of game.rocks) {
     if (rk.landed) {
       ctx.fillStyle = "rgba(0,0,0,0.4)"; // grounded shadow
       ctx.beginPath();
-      ctx.ellipse(rk.x, rk.y + rk.r * 0.75, rk.r * 1.25, rk.r * 0.5, 0, 0, Math.PI * 2);
+      ctx.ellipse(rk.x, rk.y + rk.r * 0.75, rk.r * 1.3, rk.r * 0.5, 0, 0, Math.PI * 2);
       ctx.fill();
     }
-    const size = rk.r * (rk.landed ? 3.1 : rk.big ? 2.8 : 2.6);
-    const drew = rockStrip && rockStrip.ok &&
-      drawStrip(ctx, rockStrip, 0, rk.x, rk.y + size / 2, size, false);
+    let frame = 0;
+    if (!rk.big && !rk.landed) {
+      let v = rockVariant.get(rk);
+      if (!v) { v = 1 + Math.floor(Math.random() * 3); rockVariant.set(rk, v); }
+      frame = v;
+    }
+    const size = rk.r * (rk.landed ? 3.2 : rk.big ? 2.9 : 2.7);
+    const drew = ROCKS.ok && drawStrip(ctx, ROCKS, frame, rk.x, rk.y + size / 2, size, false);
     if (!drew) {
       ctx.fillStyle = rk.landed ? "#6b5c47" : rk.big ? "#7c6b54" : "#8a8170";
       ctx.strokeStyle = "rgba(20,16,12,0.7)";

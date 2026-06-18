@@ -66,6 +66,15 @@ const CHARACTERS = [
       { name: "runeburst",   frames: 6, rows: 1, even: true, anchor: "center", key: "dark" },
     ],
   },
+  {
+    // Rock props on a dark field: 1 boulder + 3 small rocks. Flood-key from the
+    // borders so the dark background drops out but each rock's internal cracks
+    // stay solid. Center-anchored like FX.
+    prefix: "rocks",
+    jobs: [
+      { name: "set", frames: 4, rows: 1, even: true, anchor: "center", key: "flood" },
+    ],
+  },
 ];
 
 const idx = (w, x, y) => (y * w + x) * 4;
@@ -78,6 +87,29 @@ const idx = (w, x, y) => (y * w + x) * 4;
 // dark-stone golem has no large neutral-white areas, so a global key beats a
 // border flood-fill here (which leaves enclosed white pockets opaque).
 // Downscaling later (premultiplied) feathers the hard edge into a clean outline.
+// Cut out a solid/near-uniform DARK background by flood-filling inward from the
+// borders, removing only dark pixels connected to the edge. Unlike the global
+// "dark" key this preserves a rock's interior dark cracks (they aren't reachable
+// from the border once the bright rock body walls them off). For opaque props.
+function floodKey(png, thresh = 60) {
+  const { width, height, data } = png;
+  const N = width * height;
+  const bg = new Uint8Array(N);
+  const stack = [];
+  const isDark = (p) => Math.max(data[p * 4], data[p * 4 + 1], data[p * 4 + 2]) < thresh;
+  const seed = (p) => { if (!bg[p] && isDark(p)) { bg[p] = 1; stack.push(p); } };
+  for (let x = 0; x < width; x++) { seed(x); seed((height - 1) * width + x); }
+  for (let y = 0; y < height; y++) { seed(y * width); seed(y * width + width - 1); }
+  while (stack.length) {
+    const p = stack.pop(), x = p % width, y = (p / width) | 0;
+    if (x > 0) seed(p - 1);
+    if (x < width - 1) seed(p + 1);
+    if (y > 0) seed(p - width);
+    if (y < height - 1) seed(p + width);
+  }
+  for (let p = 0; p < N; p++) data[p * 4 + 3] = bg[p] ? 0 : 255;
+}
+
 function keyOutBackground(png, mode = "white") {
   const { data } = png;
   for (let i = 0; i < data.length; i += 4) {
@@ -194,7 +226,8 @@ function sample(png, fx, fy, out) {
 
 function packOne(prefix, job) {
   const src = PNG.sync.read(readFileSync(join(SRC_DIR, `${prefix}_${job.name}.src.png`)));
-  keyOutBackground(src, job.key); // RGB bg -> transparent before trimming
+  if (job.key === "flood") floodKey(src); // border flood-fill (opaque props on dark)
+  else keyOutBackground(src, job.key);    // RGB bg -> transparent before trimming
   const cols = job.frames / job.rows;
   if (!Number.isInteger(cols)) throw new Error(`${job.name}: frames/rows not integer`);
   const cellH = src.height / job.rows;
