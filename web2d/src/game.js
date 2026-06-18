@@ -11,9 +11,11 @@ export const CFG = {
   // Player
   playerR: 14, playerSpeed: 220, attackCd: 0.35, meleeRange: 70,
   dodgeSpeed: 560, dodgeTime: 0.22, dodgeIframes: 0.30, hitInvuln: 0.6,
-  // Boss (telegraphed slam: chase -> windup -> strike -> recover)
+  // Boss (telegraphed slam: chase -> windup -> strike -> recover). The slam is a
+  // melee smash centered ON the golem (matches the animation), so slamR is how
+  // far the shockwave around it reaches — not a ranged AoE at the player.
   bossR: 40, bossSpeed: 95, bossMaxHp: 600,
-  slamR: 115, windup: 1.0, strike: 0.15, recover: 0.6, bossCd: 1.6, bossDmg: 22,
+  slamR: 130, windup: 1.0, strike: 0.15, recover: 0.6, bossCd: 1.6, bossDmg: 22,
 };
 
 // --- tiny vector helpers ----------------------------------------------------
@@ -122,10 +124,12 @@ function _bossUpdate(s, dt) {
         b.y += u.y * CFG.bossSpeed * dt;
       }
       b.cd -= dt;
-      if (b.cd <= 0) {
+      // Smash only once the player is actually within the shockwave reach, so
+      // the golem closes in first instead of slamming at empty air.
+      if (b.cd <= 0 && d <= CFG.slamR) {
         b.state = "windup";
         b.t = CFG.windup;
-        b.slam = { x: p.x, y: p.y, active: true }; // telegraph the current spot
+        b.slam = { x: b.x, y: b.y, active: true }; // centered on the golem itself
       }
       break;
     }
