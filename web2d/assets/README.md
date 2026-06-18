@@ -42,6 +42,12 @@ runs). This covers both the **golem** boss and the **archer** player.
 | `fx_quakecrack.png` | 8 | 16 | no  |
 | `fx_runeburst.png`  | 6 | 18 | no  |
 
+**Props/floor:** `rocks_set.png` is a 4-frame strip (frame 0 = boulder/big rock,
+1–3 = scatter pellets), packed center-anchored with a **flood key** (border
+flood-fill that drops the dark field but keeps each rock's internal cracks).
+`arena_floor.png` is a seamless, opaque floor texture loaded directly (not
+packed/keyed) and tiled across the arena; missing → a procedural stone floor.
+
 **VFX** (`fx_*`) are packed **center-anchored** (they expand from the middle, not
 feet-on-floor) and may use a **dark/glow key** instead of the white key — see the
 `fx` entry in `tools/pack-sprites.mjs` (`even` split, `anchor: "center"`,

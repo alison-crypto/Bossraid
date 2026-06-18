@@ -145,14 +145,24 @@ function _hitPlayer(s, raw) {
   if (p.hp <= 0) s.over = "lost";
 }
 
-// Push the player out of a landed boulder so it acts as a solid obstacle.
-function _resolveObstacle(p, rk) {
-  const dx = p.x - rk.x, dy = p.y - rk.y;
-  const d = Math.hypot(dx, dy), min = rk.r + p.r;
+// Push an entity {x,y,r} out of a landed boulder so it acts as a solid obstacle.
+// Returns true if it was overlapping. Used for the player AND the golem.
+function _resolveObstacle(ent, rk) {
+  const dx = ent.x - rk.x, dy = ent.y - rk.y;
+  const d = Math.hypot(dx, dy), min = rk.r + ent.r;
   if (d < min && d > 1e-6) {
-    p.x = clamp(rk.x + (dx / d) * min, p.r, CFG.arenaW - p.r);
-    p.y = clamp(rk.y + (dy / d) * min, p.r, CFG.arenaH - p.r);
+    ent.x = clamp(rk.x + (dx / d) * min, ent.r, CFG.arenaW - ent.r);
+    ent.y = clamp(rk.y + (dy / d) * min, ent.r, CFG.arenaH - ent.r);
+    return true;
   }
+  return false;
+}
+
+// Resolve an entity against every landed boulder; true if it touched any.
+function _collideBoulders(s, ent) {
+  let hit = false;
+  for (const rk of s.rocks) if (rk.landed && _resolveObstacle(ent, rk)) hit = true;
+  return hit;
 }
 
 // Advance boss rocks. A big rock flies to its target, deals impact damage in
@@ -167,6 +177,13 @@ function _rocksUpdate(s, dt) {
     rk.x += rk.vx * dt;
     rk.y += rk.vy * dt;
     if (!rk.hit && dist(rk, p) <= rk.r + p.r) { rk.hit = true; _hitPlayer(s, rk.dmg); }
+
+    // a flying rock is blocked by an existing boulder: the big rock lands
+    // against it, a scatter pellet is spent.
+    if (s.rocks.some((o) => o !== rk && o.landed && dist(rk, o) <= rk.r + o.r)) {
+      if (rk.big) { rk.vx = 0; rk.vy = 0; rk.landed = true; kept.push(rk); }
+      continue;
+    }
 
     if (rk.big) {
       rk.travel -= Math.hypot(rk.vx, rk.vy) * dt;
@@ -288,6 +305,8 @@ function _bossStrikeTick(s, dt) {
     b.x = clamp(b.x + b.dash.dx * CFG.dashSpeed * dt, b.r, CFG.arenaW - b.r);
     b.y = clamp(b.y + b.dash.dy * CFG.dashSpeed * dt, b.r, CFG.arenaH - b.r);
     if (!b.dash.hit && dist(p, b) <= b.r + p.r) { b.dash.hit = true; _hitPlayer(s, CFG.dashDmg); }
+    // a boulder stops the charge dead (b.t=0 -> recover next frame)
+    if (_collideBoulders(s, b)) { b.dash.active = false; b.t = 0; }
   }
 }
 
@@ -311,6 +330,7 @@ function _bossUpdate(s, dt) {
         const u = unit(sub(p, b));
         b.x += u.x * CFG.bossSpeed * dt;
         b.y += u.y * CFG.bossSpeed * dt;
+        _collideBoulders(s, b); // can't walk through its own boulders
       }
       b.cd -= dt;
       if (b.cd <= 0) _bossBeginAttack(s, d);
