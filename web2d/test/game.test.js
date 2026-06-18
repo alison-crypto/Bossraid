@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGame, step, emptyInput, CFG } from "../src/game.js";
+import { arrowImpactDamage, incomingDamage } from "../src/stats.js";
 
 function input(over = {}) {
   return { ...emptyInput(), ...over, move: over.move ?? { x: 0, y: 0 } };
@@ -22,14 +23,15 @@ test("firing spawns an arrow travelling in the facing direction", () => {
   assert.ok(g.arrows[0].vy < 0 && g.arrows[0].vx === 0, "arrow flies up");
 });
 
-test("an arrow that reaches the boss damages it for the light amount", () => {
+test("an arrow that reaches the boss deals its kinetic-energy impact (minus DEF)", () => {
   const g = createGame();
   g.player.x = 480; g.player.y = 500; g.player.facing = { x: 0, y: -1 };
   g.boss.x = 480; g.boss.y = 200; g.boss.state = "recover"; g.boss.t = 99; // hold still
+  const expected = incomingDamage(arrowImpactDamage(g.player.str, g.player.dex, g.player.bowDmg), CFG.bossDef);
   const before = g.boss.hp;
   step(g, input({ attack: true }), 1 / 60); // fire
   for (let k = 0; k < 60 && g.boss.hp === before; k++) step(g, input(), 1 / 60);
-  assert.equal(before - g.boss.hp, 51, "light arrow deals 51");
+  assert.equal(before - g.boss.hp, expected);
 });
 
 test("firing respects cooldown (one arrow per press window)", () => {
