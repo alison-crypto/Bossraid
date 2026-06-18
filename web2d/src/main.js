@@ -574,6 +574,7 @@ function render() {
 
   // HUD bars
   bar(20, 20, 300, 18, p.hp / p.maxHp, "#37d35a", `HP ${Math.ceil(p.hp)}/${p.maxHp}`);
+  bar(20, 42, 220, 11, p.stamina / p.staminaMax, "#e6c84f", ""); // stamina
   const bossW = 400, bossX = W - bossW - 20;
   bar(bossX, 20, bossW, 18, b.hp / b.maxHp, "#e7544f", `BOSS ${Math.ceil(b.hp)}/${b.maxHp}`);
   // phase segment dividers (the golem escalates each time a segment empties)

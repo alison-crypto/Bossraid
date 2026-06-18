@@ -244,6 +244,31 @@ test("movement is clamped to the arena", () => {
   assert.ok(g.player.y >= g.player.r);
 });
 
+test("actions drain stamina at their own rates, and it gates when empty", () => {
+  // a shot costs staShoot
+  const g = createGame();
+  const before = g.player.stamina;
+  step(g, input({ attack: true }), 1 / 60);
+  assert.ok(before - g.player.stamina >= CFG.staShoot - 1, "shooting drains stamina");
+
+  // a dodge with too little stamina does not fire
+  const g2 = createGame();
+  g2.player.stamina = CFG.staDodge - 1;
+  step(g2, input({ dodge: true }), 1 / 60);
+  assert.equal(g2.player.dodge.t, 0, "dodge gated when stamina too low");
+  // ...but fires with enough
+  const g3 = createGame();
+  step(g3, input({ dodge: true }), 1 / 60);
+  assert.ok(g3.player.dodge.t > 0 && g3.player.stamina <= CFG.staminaMax - CFG.staDodge + 1, "dodge fires and costs stamina");
+});
+
+test("stamina regenerates while idle after the delay", () => {
+  const g = createGame();
+  g.player.stamina = 20; g.player.staRegenT = 0;
+  for (let k = 0; k < 30; k++) step(g, input(), 1 / 60); // ~0.5s idle
+  assert.ok(g.player.stamina > 20, "stamina recovers when idle");
+});
+
 test("the game freezes once it is over", () => {
   const g = createGame();
   g.over = "won";

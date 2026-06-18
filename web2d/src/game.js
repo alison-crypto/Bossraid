@@ -14,6 +14,10 @@ export const CFG = {
   playerR: 14, playerSpeed: 220, meleeRange: 70,
   attackCd: 0.35, heavyAttackCd: 0.7, arrowSpeed: 720, arrowR: 6,
   dodgeSpeed: 560, dodgeTime: 0.22, dodgeIframes: 0.30, hitInvuln: 0.6,
+  // Stamina: every action drains it at its own rate; it regenerates after a
+  // short pause. Dodge / shoot / power shot are gated when there isn't enough.
+  staminaMax: 100, staRegen: 22, staRegenDelay: 0.5,
+  staMove: 5, staShoot: 10, staHeavy: 26, staDodge: 24,
   // Boss. Every attack runs chase -> windup (telegraph) -> strike (active) ->
   // recover, and any hit is negated while the player is invulnerable. The golem
   // has 3 health-bar segments (phases): depleting one staggers it briefly, then
@@ -57,6 +61,7 @@ export function createGame(opts = {}) {
       x: CFG.arenaW * 0.5, y: CFG.arenaH * 0.72, r: CFG.playerR,
       str, dex, con, def, weaponDmg, bowDmg,
       hp, maxHp: hp,
+      stamina: CFG.staminaMax, staminaMax: CFG.staminaMax, staRegenT: 0,
       facing: { x: 0, y: -1 },
       invuln: 0, attackCd: 0,
       dodge: { t: 0, dir: { x: 0, y: 0 } },
@@ -88,13 +93,16 @@ export function step(s, input, dt) {
   // Timers
   p.invuln = Math.max(0, p.invuln - dt);
   p.attackCd = Math.max(0, p.attackCd - dt);
+  p.staRegenT = Math.max(0, p.staRegenT - dt);
 
-  // Dodge start (dash with i-frames) — direction from input, else current facing.
-  if (i.dodge && p.dodge.t <= 0) {
+  // Dodge start (dash with i-frames) — costs stamina, gated when too low.
+  if (i.dodge && p.dodge.t <= 0 && p.stamina >= CFG.staDodge) {
     const d = (i.move.x || i.move.y) ? unit(i.move) : p.facing;
     p.dodge.t = CFG.dodgeTime;
     p.dodge.dir = d;
     p.invuln = Math.max(p.invuln, CFG.dodgeIframes);
+    p.stamina -= CFG.staDodge;
+    p.staRegenT = CFG.staRegenDelay;
   }
 
   // Movement (dodging overrides steering)
@@ -105,7 +113,11 @@ export function step(s, input, dt) {
     vy = p.dodge.dir.y * CFG.dodgeSpeed;
   } else {
     const m = unit(i.move);
-    if (m.x || m.y) p.facing = m;
+    if (m.x || m.y) {
+      p.facing = m;
+      p.stamina -= CFG.staMove * dt; // moving drains a trickle
+      p.staRegenT = CFG.staRegenDelay;
+    }
     vx = m.x * CFG.playerSpeed;
     vy = m.y * CFG.playerSpeed;
   }
@@ -116,18 +128,27 @@ export function step(s, input, dt) {
   // charged shot; light = a quick shot. Can't fire mid-dodge.
   if ((i.attack || i.heavy) && p.attackCd <= 0 && p.dodge.t <= 0) {
     const heavy = !!i.heavy; // heavy wins if both are held
-    const dir = unit(p.facing);
-    // Ranged kinetic-energy impact (CombatMath); the charged shot scales it by
-    // the STR-stepped heavy multiplier.
-    const base = arrowImpactDamage(p.str, p.dex, p.bowDmg);
-    const dmg = heavy ? Math.round(base * heavyMultiplier(p.str)) : base;
-    s.arrows.push({
-      x: p.x + dir.x * p.r, y: p.y + dir.y * p.r,
-      vx: dir.x * CFG.arrowSpeed, vy: dir.y * CFG.arrowSpeed,
-      dmg, heavy,
-    });
-    p.attackCd = heavy ? CFG.heavyAttackCd : CFG.attackCd;
+    const cost = heavy ? CFG.staHeavy : CFG.staShoot;
+    if (p.stamina >= cost) { // gated when too low
+      const dir = unit(p.facing);
+      // Ranged kinetic-energy impact (CombatMath); the charged shot scales it by
+      // the STR-stepped heavy multiplier.
+      const base = arrowImpactDamage(p.str, p.dex, p.bowDmg);
+      const dmg = heavy ? Math.round(base * heavyMultiplier(p.str)) : base;
+      s.arrows.push({
+        x: p.x + dir.x * p.r, y: p.y + dir.y * p.r,
+        vx: dir.x * CFG.arrowSpeed, vy: dir.y * CFG.arrowSpeed,
+        dmg, heavy,
+      });
+      p.attackCd = heavy ? CFG.heavyAttackCd : CFG.attackCd;
+      p.stamina -= cost;
+      p.staRegenT = CFG.staRegenDelay;
+    }
   }
+
+  // Stamina regen (after the short post-action pause) + clamp.
+  if (p.staRegenT <= 0) p.stamina = Math.min(p.staminaMax, p.stamina + CFG.staRegen * dt);
+  p.stamina = Math.max(0, p.stamina);
 
   _arrowsUpdate(s, dt);
   _bossUpdate(s, dt);
