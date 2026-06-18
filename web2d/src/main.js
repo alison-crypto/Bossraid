@@ -59,11 +59,15 @@ const pointers = new Map(); // pointerId -> { role }
 // Missing files fall back to the placeholder circle, so the game runs today.
 const BOSS_DISPLAY_H = 190; // on-screen height of the golem in px
 const GOLEM = {
-  idle:  loadStrip("./assets/golem_idle.png", 6, 8, true),
-  walk:  loadStrip("./assets/golem_walk.png", 8, 10, true),
-  slam:  loadStrip("./assets/golem_slam.png", 10, 14, false),
-  hit:   loadStrip("./assets/golem_hit.png", 4, 16, false),
-  death: loadStrip("./assets/golem_death.png", 6, 9, false),
+  idle:    loadStrip("./assets/golem_idle.png", 6, 8, true),
+  walk:    loadStrip("./assets/golem_walk.png", 8, 10, true),
+  smash:   loadStrip("./assets/golem_smash.png", 8, 8, false),
+  dash:    loadStrip("./assets/golem_dash.png", 6, 7, false),
+  bigrock: loadStrip("./assets/golem_bigrock.png", 6, 7, false),
+  scatter: loadStrip("./assets/golem_scatter.png", 6, 7, false),
+  quake:   loadStrip("./assets/golem_quake.png", 8, 6, false),
+  hit:     loadStrip("./assets/golem_hit.png", 4, 16, false),
+  death:   loadStrip("./assets/golem_death.png", 6, 9, false),
 };
 const bossAnim = new Animator();
 
@@ -104,11 +108,8 @@ function updateBossAnimSignals(dt) {
 function bossClip() {
   const b = game.boss;
   if (game.over === "won") return "death";
-  if (b.state === "windup" || b.state === "strike") {
-    // Placeholder mapping until per-attack art exists: the dash reads as a run,
-    // the rest share the slam pose. (Regenerating golem art is the next step.)
-    return b.attack === "dash" ? "walk" : "slam";
-  }
+  // Each attack now has its own animation (smash/dash/bigrock/scatter/quake).
+  if (b.state === "windup" || b.state === "strike") return b.attack;
   if (bossHitT > 0) return "hit";
   if (b.state === "idle" && bossMoving) return "walk";
   return "idle";
