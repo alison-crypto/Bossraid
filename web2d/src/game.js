@@ -4,7 +4,7 @@
 // state, an input, and a dt, and assert on the result. This mirrors the project
 // principle "logic separate from rendering" (see docs/ROADMAP.md).
 
-import { maxHP, lightDamage, heavyDamage, damageTaken } from "./stats.js";
+import { maxHP, arrowImpactDamage, heavyMultiplier, incomingDamage } from "./stats.js";
 
 export const CFG = {
   arenaW: 960, arenaH: 600,
@@ -19,7 +19,7 @@ export const CFG = {
   // well-timed dodge i-frames all five patterns. The golem is fast and
   // relentless so a ranged archer can't trivially kite it. bossCd is the gap
   // between attacks.
-  bossR: 40, bossSpeed: 165, bossMaxHp: 600, bossCd: 1.5,
+  bossR: 40, bossSpeed: 165, bossMaxHp: 600, bossCd: 1.5, bossDef: 0,
   // 1) smash — melee shockwave ring centered on the golem (used in close range).
   slamR: 130, windup: 0.9, strike: 0.15, recover: 0.55, bossDmg: 22,
   // 2) dash charge — lunge along a locked line; contact damage (i-frame it).
@@ -48,14 +48,14 @@ export function emptyInput() {
 
 export function createGame(opts = {}) {
   const str = opts.str ?? 10, dex = opts.dex ?? 12, con = opts.con ?? 10;
-  const def = opts.def ?? 0, weaponDmg = opts.weaponDmg ?? 50;
+  const def = opts.def ?? 0, weaponDmg = opts.weaponDmg ?? 50, bowDmg = opts.bowDmg ?? 12;
   const hp = maxHP(con, str);
   return {
     t: 0,
     over: null, // null | "won" | "lost"
     player: {
       x: CFG.arenaW * 0.5, y: CFG.arenaH * 0.72, r: CFG.playerR,
-      str, dex, con, def, weaponDmg,
+      str, dex, con, def, weaponDmg, bowDmg,
       hp, maxHp: hp,
       facing: { x: 0, y: -1 },
       invuln: 0, attackCd: 0,
@@ -116,9 +116,10 @@ export function step(s, input, dt) {
   if ((i.attack || i.heavy) && p.attackCd <= 0 && p.dodge.t <= 0) {
     const heavy = !!i.heavy; // heavy wins if both are held
     const dir = unit(p.facing);
-    const dmg = heavy
-      ? heavyDamage(p.str, p.dex, p.weaponDmg)
-      : lightDamage(p.str, p.dex, p.weaponDmg);
+    // Ranged kinetic-energy impact (CombatMath); the charged shot scales it by
+    // the STR-stepped heavy multiplier.
+    const base = arrowImpactDamage(p.str, p.dex, p.bowDmg);
+    const dmg = heavy ? Math.round(base * heavyMultiplier(p.str)) : base;
     s.arrows.push({
       x: p.x + dir.x * p.r, y: p.y + dir.y * p.r,
       vx: dir.x * CFG.arrowSpeed, vy: dir.y * CFG.arrowSpeed,
@@ -138,7 +139,7 @@ export function step(s, input, dt) {
 function _hitPlayer(s, raw) {
   const p = s.player;
   if (p.invuln > 0) return;
-  const dmg = damageTaken(raw, p.def);
+  const dmg = incomingDamage(raw, p.def);
   p.hp = Math.max(0, p.hp - dmg);
   p.lastHit = dmg;
   p.invuln = CFG.hitInvuln;
@@ -207,8 +208,9 @@ function _arrowsUpdate(s, dt) {
     a.x += a.vx * dt;
     a.y += a.vy * dt;
     if (b.hp > 0 && dist(a, b) <= b.r + CFG.arrowR) {
-      b.hp = Math.max(0, b.hp - a.dmg);
-      b.lastHit = a.dmg;
+      const dmg = incomingDamage(a.dmg, CFG.bossDef); // golem DEF subtracts
+      b.hp = Math.max(0, b.hp - dmg);
+      b.lastHit = dmg;
       if (b.hp <= 0) s.over = "won";
       continue; // arrow consumed on hit
     }
