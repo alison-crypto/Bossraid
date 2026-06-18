@@ -5,6 +5,7 @@ import { createGame, step, emptyInput, CFG } from "./game.js";
 import { stickVector, knobOffset, pointInCircle } from "./touch.js";
 import { Animator, frameIndex, clipDuration } from "./anim.js";
 import { loadStrip, drawStrip } from "./sprites.js";
+import { uiBegin, uiButton, uiZone, uiHit, panel, dim, label, roundRect } from "./ui.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -25,6 +26,21 @@ document.addEventListener("fullscreenchange", resizeCanvas);
 document.addEventListener("webkitfullscreenchange", resizeCanvas);
 
 let game = createGame();
+
+// --- scene / flow -----------------------------------------------------------
+let scene = "menu"; // menu | charSelect | bossSelect | playing (paused added later)
+let selectedChar = "archer";
+let selectedBoss = "golem";
+const CHARACTERS = [
+  { id: "archer", name: "Archer", locked: false, blurb: "Ranged — kite & dodge" },
+  { id: "knight", name: "Knight", locked: true, blurb: "Coming soon" },
+  { id: "mage", name: "Mage", locked: true, blurb: "Coming soon" },
+];
+const BOSSES = [
+  { id: "golem", name: "Ancient Stone Golem", locked: false, blurb: "3 phases · smash · dash · rocks · quake" },
+  { id: "wyrm", name: "Cinder Wyrm", locked: true, blurb: "Coming soon" },
+];
+function startFight() { game = createGame(); scene = "playing"; }
 
 const TOUCH = matchMedia("(pointer: coarse)").matches || "ontouchstart" in window;
 
@@ -291,6 +307,8 @@ function toCanvas(e) {
 function onDown(e) {
   e.preventDefault();
   const p = toCanvas(e);
+  // menu screens (and the game-over overlay) are click-driven UI
+  if (scene !== "playing" || game.over) { handleUiClick(p.x, p.y); return; }
   // buttons first (right side)
   for (const b of BTN) {
     if (pointInCircle(p.x, p.y, b.cx, b.cy, b.r)) {
@@ -337,6 +355,14 @@ canvas.addEventListener("pointercancel", onUp);
 const keys = new Set();
 const REMAP = { Space: 1, ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1 };
 addEventListener("keydown", (e) => { keys.add(e.code); if (REMAP[e.code]) e.preventDefault(); });
+// Enter/Space advances the menu screens (click/tap also works).
+addEventListener("keydown", (e) => {
+  if (scene === "playing" || (e.code !== "Enter" && e.code !== "Space")) return;
+  if (scene === "menu") scene = "charSelect";
+  else if (scene === "charSelect") scene = "bossSelect";
+  else if (scene === "bossSelect") startFight();
+  e.preventDefault();
+});
 addEventListener("keyup", (e) => keys.delete(e.code));
 
 function readInput() {
@@ -369,27 +395,113 @@ const pressed = (role) => {
 };
 
 // --- loop -------------------------------------------------------------------
+// --- menu / select screens --------------------------------------------------
+function beginScreen() {
+  ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
+  drawFloor();
+  dim(ctx, W, H, 0.6);
+  uiBegin();
+}
+
+// A selectable roster card (portrait from the character/boss idle art).
+function drawCard(item, x, y, w, h, selected, id, strip) {
+  ctx.fillStyle = item.locked ? "rgba(16,18,26,0.92)" : "rgba(22,28,40,0.96)";
+  roundRect(ctx, x, y, w, h, 12); ctx.fill();
+  ctx.strokeStyle = selected ? "rgba(150,200,255,0.95)" : "rgba(150,170,210,0.3)";
+  ctx.lineWidth = selected ? 4 : 2; roundRect(ctx, x, y, w, h, 12); ctx.stroke();
+  if (strip && strip.ok && !item.locked) {
+    drawStrip(ctx, strip, 0, x + w / 2, y + h * 0.74, h * 0.56, false);
+  } else {
+    ctx.fillStyle = "#2a3140";
+    roundRect(ctx, x + w * 0.28, y + h * 0.22, w * 0.44, h * 0.46, 8); ctx.fill();
+  }
+  ctx.textAlign = "center";
+  ctx.fillStyle = item.locked ? "#5a6478" : "#eaf0ff";
+  ctx.font = "bold 22px system-ui, sans-serif";
+  ctx.fillText(item.name, x + w / 2, y + h - 44);
+  ctx.fillStyle = "#9fb3d6"; ctx.font = "13px system-ui, sans-serif";
+  ctx.fillText(item.blurb, x + w / 2, y + h - 20);
+  if (item.locked) {
+    ctx.fillStyle = "rgba(6,8,12,0.45)"; roundRect(ctx, x, y, w, h, 12); ctx.fill();
+    label(ctx, "🔒 LOCKED", x + w / 2, y + h / 2, { size: 18, bold: true, color: "#aebbd6" });
+  } else {
+    uiZone(id, x, y, w, h);
+  }
+}
+
+function renderMenu() {
+  beginScreen();
+  label(ctx, "BOSSRAID", W / 2, 175, { size: 66, bold: true, color: "#eef3ff" });
+  label(ctx, "2 D", W / 2, 212, { size: 22, color: "#9fb3d6" });
+  uiButton(ctx, "play", "PLAY", W / 2 - 110, 285, 220, 58, { accent: "#345b86" });
+  label(ctx, TOUCH ? "tap PLAY to begin" : "click PLAY (or press Enter)", W / 2, 400, { size: 14, color: "#7e8aa3" });
+}
+
+function renderCharSelect() {
+  beginScreen();
+  label(ctx, "SELECT CHARACTER", W / 2, 84, { size: 34, bold: true, color: "#eef3ff" });
+  const cw = 210, ch = 300, gap = 28, total = CHARACTERS.length * cw + (CHARACTERS.length - 1) * gap;
+  const x0 = (W - total) / 2, y = 120;
+  CHARACTERS.forEach((c, i) => drawCard(c, x0 + i * (cw + gap), y, cw, ch, selectedChar === c.id, "char_" + c.id, ARCHER.idle));
+  uiButton(ctx, "backMenu", "◀ Back", 28, H - 66, 120, 44);
+  uiButton(ctx, "toBoss", "NEXT ▶", W - 28 - 180, H - 66, 180, 50, { accent: "#2f7a4f" });
+}
+
+function renderBossSelect() {
+  beginScreen();
+  label(ctx, "SELECT BOSS", W / 2, 84, { size: 34, bold: true, color: "#eef3ff" });
+  const cw = 250, ch = 300, gap = 28, total = BOSSES.length * cw + (BOSSES.length - 1) * gap;
+  const x0 = (W - total) / 2, y = 120;
+  BOSSES.forEach((b, i) => drawCard(b, x0 + i * (cw + gap), y, cw, ch, selectedBoss === b.id, "boss_" + b.id, GOLEM.idle));
+  uiButton(ctx, "backChar", "◀ Back", 28, H - 66, 120, 44);
+  uiButton(ctx, "fight", "FIGHT ▶", W - 28 - 200, H - 66, 200, 52, { accent: "#9a3b3b" });
+}
+
+function renderScene() {
+  if (scene === "menu") renderMenu();
+  else if (scene === "charSelect") renderCharSelect();
+  else if (scene === "bossSelect") renderBossSelect();
+}
+
+// Route a menu/game-over click to its action (regions registered last render).
+function handleUiClick(x, y) {
+  const id = uiHit(x, y);
+  if (!id) return;
+  if (game.over) {
+    if (id === "retry") startFight();
+    else if (id === "menu") scene = "menu";
+    return;
+  }
+  if (scene === "menu" && id === "play") scene = "charSelect";
+  else if (scene === "charSelect") {
+    if (id.startsWith("char_")) selectedChar = id.slice(5);
+    else if (id === "toBoss") scene = "bossSelect";
+    else if (id === "backMenu") scene = "menu";
+  } else if (scene === "bossSelect") {
+    if (id.startsWith("boss_")) selectedBoss = id.slice(5);
+    else if (id === "fight") startFight();
+    else if (id === "backChar") scene = "charSelect";
+  }
+}
+
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
 
-  // restart: R on keyboard, or tap the attack button on the game-over screen
-  if (game.over && (keys.has("KeyR") || pressed("attack"))) game = createGame();
-  if (!game.over) step(game, readInput(), dt);
-
-  updateBossAnimSignals(dt);
-  bossAnim.play(bossClip());
-  bossAnim.tick(dt);
-
-  updatePlayerAnimSignals(dt);
-  playerAnim.play(playerClip());
-  playerAnim.tick(dt);
-
-  updateFxTriggers(dt);
-  tickEffects(dt);
-
-  render();
+  if (scene === "playing") {
+    if (game.over) {
+      if (keys.has("KeyR")) startFight();
+    } else {
+      step(game, readInput(), dt);
+    }
+    updateBossAnimSignals(dt); bossAnim.play(bossClip()); bossAnim.tick(dt);
+    updatePlayerAnimSignals(dt); playerAnim.play(playerClip()); playerAnim.tick(dt);
+    updateFxTriggers(dt); tickEffects(dt);
+    render();
+  } else {
+    renderScene();
+  }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -594,15 +706,14 @@ function render() {
   }
 
   if (game.over) {
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
-    ctx.fillRect(0, 0, W, H);
+    dim(ctx, W, H, 0.6);
     ctx.textAlign = "center";
     ctx.fillStyle = game.over === "won" ? "#7CFC9A" : "#ff7a7a";
     ctx.font = "bold 56px system-ui, sans-serif";
-    ctx.fillText(game.over === "won" ? "VICTORY" : "DEFEATED", W / 2, H / 2);
-    ctx.fillStyle = "#cfd6e4";
-    ctx.font = "20px system-ui, sans-serif";
-    ctx.fillText(TOUCH ? "tap ⚔ to fight again" : "press R to fight again", W / 2, H / 2 + 40);
+    ctx.fillText(game.over === "won" ? "VICTORY" : "DEFEATED", W / 2, H / 2 - 30);
+    uiBegin();
+    uiButton(ctx, "retry", "Retry", W / 2 - 200, H / 2 + 16, 180, 52, { accent: "#2f7a4f" });
+    uiButton(ctx, "menu", "Menu", W / 2 + 20, H / 2 + 16, 180, 52);
   }
 }
 
