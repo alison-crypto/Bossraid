@@ -4,7 +4,24 @@
 // state, an input, and a dt, and assert on the result. This mirrors the project
 // principle "logic separate from rendering" (see docs/ROADMAP.md).
 
-import { maxHP, arrowImpactDamage, heavyMultiplier, incomingDamage } from "./stats.js";
+import { maxHP, arrowImpactDamage, heavyMultiplier, incomingDamage, skillMods } from "./stats.js";
+
+// Resolve the player's combat fields from raw opts (stats + equipment + skill
+// ranks). Single source so createGame and live (pause-menu) re-apply agree.
+export function deriveCombat(opts = {}) {
+  const str = opts.str ?? 10, dex = opts.dex ?? 12, con = opts.con ?? 10;
+  const sk = opts.skills || {};
+  const mods = skillMods(sk.heavy || 0, 0, sk.dodge || 0, 0, sk.ranged || 0);
+  return {
+    str, dex, con,
+    def: opts.def ?? 0, bowDmg: opts.bowDmg ?? 12, weaponDmg: opts.weaponDmg ?? 50,
+    speed: CFG.playerSpeed + (opts.speedBonus || 0),
+    dodgeIframes: mods.dodgeIframes,
+    heavyBaseMult: mods.heavyBaseMult,
+    rangedVBonus: mods.rangedVBonus,
+    maxHp: maxHP(con, str),
+  };
+}
 
 export const CFG = {
   arenaW: 960, arenaH: 600,
@@ -51,15 +68,15 @@ export function emptyInput() {
 }
 
 export function createGame(opts = {}) {
-  const str = opts.str ?? 10, dex = opts.dex ?? 12, con = opts.con ?? 10;
-  const def = opts.def ?? 0, weaponDmg = opts.weaponDmg ?? 50, bowDmg = opts.bowDmg ?? 12;
-  const hp = maxHP(con, str);
+  const c = deriveCombat(opts);
+  const hp = c.maxHp;
   return {
     t: 0,
     over: null, // null | "won" | "lost"
     player: {
       x: CFG.arenaW * 0.5, y: CFG.arenaH * 0.72, r: CFG.playerR,
-      str, dex, con, def, weaponDmg, bowDmg,
+      str: c.str, dex: c.dex, con: c.con, def: c.def, weaponDmg: c.weaponDmg, bowDmg: c.bowDmg,
+      speed: c.speed, dodgeIframes: c.dodgeIframes, heavyBaseMult: c.heavyBaseMult, rangedVBonus: c.rangedVBonus,
       hp, maxHp: hp,
       stamina: CFG.staminaMax, staminaMax: CFG.staminaMax, staRegenT: 0,
       facing: { x: 0, y: -1 },
@@ -100,7 +117,7 @@ export function step(s, input, dt) {
     const d = (i.move.x || i.move.y) ? unit(i.move) : p.facing;
     p.dodge.t = CFG.dodgeTime;
     p.dodge.dir = d;
-    p.invuln = Math.max(p.invuln, CFG.dodgeIframes);
+    p.invuln = Math.max(p.invuln, p.dodgeIframes);
     p.stamina -= CFG.staDodge;
     p.staRegenT = CFG.staRegenDelay;
   }
@@ -118,8 +135,8 @@ export function step(s, input, dt) {
       p.stamina -= CFG.staMove * dt; // moving drains a trickle
       p.staRegenT = CFG.staRegenDelay;
     }
-    vx = m.x * CFG.playerSpeed;
-    vy = m.y * CFG.playerSpeed;
+    vx = m.x * p.speed;
+    vy = m.y * p.speed;
   }
   p.x = clamp(p.x + vx * dt, p.r, CFG.arenaW - p.r);
   p.y = clamp(p.y + vy * dt, p.r, CFG.arenaH - p.r);
@@ -133,8 +150,8 @@ export function step(s, input, dt) {
       const dir = unit(p.facing);
       // Ranged kinetic-energy impact (CombatMath); the charged shot scales it by
       // the STR-stepped heavy multiplier.
-      const base = arrowImpactDamage(p.str, p.dex, p.bowDmg);
-      const dmg = heavy ? Math.round(base * heavyMultiplier(p.str)) : base;
+      const base = arrowImpactDamage(p.str, p.dex, p.bowDmg, p.rangedVBonus);
+      const dmg = heavy ? Math.round(base * heavyMultiplier(p.str, p.heavyBaseMult)) : base;
       s.arrows.push({
         x: p.x + dir.x * p.r, y: p.y + dir.y * p.r,
         vx: dir.x * CFG.arrowSpeed, vy: dir.y * CFG.arrowSpeed,
