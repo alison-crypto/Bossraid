@@ -4,6 +4,11 @@ A browser-based, single-player **boss-raid** action game. Control a hero and
 fight large bosses with telegraphed attack patterns and dodge windows. Pure
 HTML5 Canvas + vanilla ES modules — **no build step required to play**.
 
+> **Active development is the 2D RPG in [`web2d/`](web2d/).** Resuming the project
+> (or a new Claude session)? Start with **[`web2d/HANDOFF.md`](web2d/HANDOFF.md)** —
+> the full "resume here" doc (architecture, tuning, backlog, art pipeline). Live:
+> https://alison-crypto.github.io/Bossraid/
+
 ## Play
 
 The game is plain static files. Either:

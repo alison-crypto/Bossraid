@@ -1,0 +1,114 @@
+# Bossraid 2D — Project Handoff / "Resume Here"
+
+> **New Claude session / new account? Start here.** This file is the durable
+> memory of the build (chat history does not transfer between accounts; the repo
+> does). Read it, then continue. Develop on a `claude/...` branch → PR → `main`.
+
+## What this is
+A browser, single-player **boss-raid action RPG** in `web2d/` — pure HTML5
+canvas + vanilla ES modules, **no build step**. You play a ranged **archer** vs a
+3-phase **Ancient Stone Golem**. Logic is separated from rendering so the sim is
+deterministic and unit-tested.
+
+- **Live:** https://alison-crypto.github.io/Bossraid/ (GitHub Pages)
+- **Repo:** `alison-crypto/Bossraid` — game lives in `web2d/`
+- **Deploy:** merge to `main` → `.github/workflows/pages.yml` publishes `web2d/`
+  to Pages automatically (~1 min). Pages source = "GitHub Actions" (already on).
+- **Tests:** `cd web2d && npm test` (node:test) — currently **50 passing**.
+- **Run locally:** `cd web2d && python3 -m http.server 8000` → open localhost.
+- **Controls:** WASD move · J shoot · L power shot · Space dodge · Esc/P pause.
+
+## Architecture (reuse, don't rebuild)
+| File | Responsibility |
+|---|---|
+| `web2d/src/stats.js` | **Canonical `CombatMath`** (ported 1:1 from the Godot build) — the single source of truth: `maxHealth`, `forceBase`, `lightDamage`/`heavyDamage`/`heavyMultiplier`, kinetic-energy ranged (`arrowMass`/`arrowLaunchSpeed`/`arrowImpactDamage`), `incomingDamage` (block/parry/DEF), `swingTime`, `skillMods`, `statSheet`. **All combat/UI reads from here.** |
+| `web2d/src/game.js` | Headless, deterministic **sim**. `CFG` = ALL tuning. `createGame(opts)`, `step(s,input,dt)`. `deriveCombat(opts)` turns stats+equipment+skill ranks into the player's combat fields. Boss state machine (idle→windup→strike→recover), 5 attacks, **3 phases**, stamina, boulders-as-obstacles. **No DOM.** Unit-tested. |
+| `web2d/src/main.js` | Canvas **view + input + scene machine** (menu / charSelect / bossSelect / playing / paused / settings), animation drivers (`bossClip`/`playerClip`), **FX layer** (`spawnFx`/`updateFxTriggers`), telegraphs, HUD, hi-DPI render (`resizeCanvas`, `setTransform`), display settings. |
+| `web2d/src/ui.js` | Tiny canvas immediate-mode UI: `uiButton`/`uiZone`/`uiHit`/`panel`/`label` (logical-coord hit-testing). Used by menu, pause, settings. |
+| `web2d/src/rpg.js` | **Profile** (stats, skill ranks, owned/equipped), equipment catalogs (bows/armor/boots), skills, **XP/leveling**, `gameOptsFromProfile`, `localStorage` save/load. |
+| `web2d/src/sprites.js` | `loadStrip` / `drawStrip` (feet-anchored, flip). Missing art → graceful fallback. |
+| `web2d/src/anim.js` | `Animator`, `frameIndex`, `clipDuration` (loop wraps, one-shots clamp). |
+| `web2d/src/touch.js` | Joystick/button math for touch. |
+| `web2d/tools/pack-sprites.mjs` | **Sprite packer** (pngjs). `CHARACTERS` table → reads `art-src/<prefix>_<clip>.src.png`, keys out bg, trims, repacks to uniform 512 strips in `assets/`. Key modes: `white` (default), `dark` (glow/additive), `flood` (border flood-fill for opaque props); `anchor:"center"` for FX/props; `even` split. |
+| `web2d/art-src/` → `web2d/assets/` | Raw source art → packed strips. `npm run pack-sprites` regenerates. |
+
+### Principles
+- **Sim/view split**; keep `game.js` DOM-free and tested.
+- **`stats.js` is the source of truth** — never hardcode damage; call CombatMath.
+- Canvas UI (no DOM widgets); render in 960×600 **logical** coords, backing store
+  is hi-DPI (crisp). Pointer mapped logical via `toCanvas`.
+- Ship **small PRs**, tests green, merge to `main` (auto-deploys).
+
+## Gameplay systems (current)
+- **Archer (player):** ranged kinetic-energy arrows (`arrowImpactDamage`); `J`
+  light, `L` charged (×`heavyMultiplier`). Dodge-roll = i-frames. Sprites:
+  idle/walk/shoot/hit/death/dodge.
+- **Golem (boss):** 5 attacks — **smash** (ground ring), **dash** (lunge, i-frame
+  it), **big rock** (lands as a permanent **boulder obstacle** that blocks the
+  player, arrows, AND the golem's own dash/rocks), **scatter** (6 pellets),
+  **earthquake** (whole-arena, dodge the flash). **3 phases**: each depleted
+  health-bar segment → brief stagger, then faster + harder + new attack rotation.
+- **Stamina:** every action drains it (move 2/s, shoot 8, power 20, dodge 18);
+  recharges fast idle (28/s), slowly while walking (9/s); gates actions when low.
+- **RPG:** XP from damage (+win bonus) → levels → stat points (STR/DEX/CON) +
+  skill points; equip bows/armor/boots (STR-gated); skills Marksmanship/Evasion/
+  Power Shot. Managed in the **pause menu** tabs. Persists to `localStorage`.
+- **FX:** impact, dust, shockwave, rock-shatter, quake-cracks, rune-burst +
+  procedural telegraphs, screen-shake, stone floor.
+
+## Tuning knobs
+**`CFG` in `web2d/src/game.js`** (current values):
+- Player: `playerSpeed 220`, `attackCd 0.35`, `heavyAttackCd 0.7`, `arrowSpeed 720`,
+  `dodgeSpeed 560`, `dodgeTime 0.22`, `hitInvuln 0.6`.
+- Stamina: `staminaMax 120`, `staRegen 28`, `staRegenWalk 9`, `staRegenDelay 0.5`,
+  `staMove 2`, `staShoot 8`, `staHeavy 20`, `staDodge 18`.
+- Boss: `bossMaxHp 1200`, `bossSpeed 165`, `bossCd 1.5`, `bossDef 6`, `phases 3`,
+  `phaseStagger 0.85`. Attacks: smash `slamR 130`/`windup 0.9`/`bossDmg 26`; dash
+  `dashSpeed 820`/`dashDmg 30`; big rock `bigRockR 26`/`bigRockDmg 28`; scatter
+  `scatterCount 6`/`smallRockDmg 15`; quake `quakeWindup 1.1`/`quakeDmg 34`.
+- Phase scaling (in `game.js`): per phase +28% speed, −16% cooldown, −12% windup,
+  +22% damage.
+
+**`web2d/src/rpg.js`:** bows (12/22/34, str 6/10/14), armor (def 4/8/12), boots
+(def 1/2, +speed), skills (cap rank 5), `xpToNext = 100 × level`, default stats
+STR 10 / DEX 12 / CON 10.
+
+## Adding art (pipeline)
+1. Generate sheets (single row, one anim per file). Put raw PNGs in
+   `web2d/art-src/<prefix>_<clip>.src.png`.
+2. Add a `CHARACTERS` entry / clip in `tools/pack-sprites.mjs` (frames, rows,
+   `key`, `anchor`, `even`). FX on dark bg → `key:"dark"`; opaque props on dark →
+   `key:"flood"`; characters on white → default.
+3. `cd web2d && npm run pack-sprites` → strips land in `assets/`. Wire in
+   `main.js` (`loadStrip` + clip mapping).
+- ChatGPT art comes as RGB (baked bg, not true alpha); the packer's keys handle
+  it. Owner usually drops art in a shared Google Drive folder; pull via `curl`
+  `https://drive.google.com/uc?export=download&id=<id>` (Drive MCP `search_files`
+  to list a folder by `parentId`).
+
+## Changelog (PRs on `main`)
+#50 golem art + Pages hosting · #51 (base) · #52 coherent slam · #53 archer ranged
+combat · #54 golem 5-attack kit + boulders · #55 bespoke golem anims · #56 VFX
+layer · #57 telegraphs/whole-map quake/floor/rock sprites · #59 floor+rock art,
+boulders block boss, dash FX · #60 fill-screen canvas · #61 hi-DPI crisp render ·
+#62 adopt CombatMath · #63 3-phase golem · #64 stamina · #65 menu+select · #66 RPG
+core (equip/skills/XP) · #67 pause + RPG panels · #68 display options · #69 stamina
+retune.
+
+## Backlog / next ideas
+- **Unlock** Knight/Mage characters + Cinder Wyrm boss (currently `locked:true` in
+  `main.js` `CHARACTERS`/`BOSSES`) — needs their kits + art.
+- More equipment/skills; richer skill tree; balance pass (boss is intentionally
+  tough — see CFG).
+- Optional: melee/kick & block/parry (CombatMath already supports them).
+- 4K art deferred (no visible gain at current display sizes; hi-DPI already maxes
+  sharpness).
+
+## Migrating to a new Claude account
+- The **code is yours via GitHub** — independent of any Claude plan. Keep the
+  GitHub account & repo.
+- On the new account: open Claude Code, **connect `alison-crypto/Bossraid`**, say
+  *"read web2d/HANDOFF.md and continue."*
+- Chat history can't transfer; the full session transcript is saved at
+  `web2d/docs/SESSION_LOG.md` (in this repo) and backed up to Google Drive
+  (link emailed to the owner).
