@@ -35,6 +35,18 @@ runs). This covers both the **golem** boss and the **archer** player.
 | `archer_hit.png`   | 4 | 16 | no  |
 | `archer_death.png` | 6 | 9  | no  |
 | `archer_dodge.png` | 6 | 18 | no  |
+| `fx_impact.png`     | 5 | 22 | no  |
+| `fx_dust.png`       | 6 | 16 | no  |
+| `fx_shockwave.png`  | 6 | 18 | no  |
+| `fx_rockshatter.png`| 6 | 16 | no  |
+| `fx_quakecrack.png` | 8 | 16 | no  |
+| `fx_runeburst.png`  | 6 | 18 | no  |
+
+**VFX** (`fx_*`) are packed **center-anchored** (they expand from the middle, not
+feet-on-floor) and may use a **dark/glow key** instead of the white key — see the
+`fx` entry in `tools/pack-sprites.mjs` (`even` split, `anchor: "center"`,
+`key: "dark"` for the glow sheets). The view layer plays them as one-shot effects
+and blends the glows additively (`src/main.js` → `FX`).
 
 (Frame counts match the packed strips. FPS is tunable in `src/main.js` →
 `GOLEM` / `ARCHER`.)

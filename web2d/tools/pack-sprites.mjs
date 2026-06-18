@@ -52,6 +52,20 @@ const CHARACTERS = [
       { name: "dodge", frames: 6, rows: 1 },
     ],
   },
+  {
+    // VFX: even-split (debris bridges gaps), centered (effects expand from the
+    // middle, not feet-on-floor). impact/runeburst are glows on near-black, so
+    // they use the "dark" key; the rest are on white.
+    prefix: "fx",
+    jobs: [
+      { name: "impact",      frames: 5, rows: 1, even: true, anchor: "center", key: "dark" },
+      { name: "dust",        frames: 6, rows: 1, even: true, anchor: "center" },
+      { name: "shockwave",   frames: 6, rows: 1, even: true, anchor: "center" },
+      { name: "rockshatter", frames: 6, rows: 1, even: true, anchor: "center" },
+      { name: "quakecrack",  frames: 8, rows: 1, even: true, anchor: "center" },
+      { name: "runeburst",   frames: 6, rows: 1, even: true, anchor: "center", key: "dark" },
+    ],
+  },
 ];
 
 const idx = (w, x, y) => (y * w + x) * 4;
@@ -64,12 +78,18 @@ const idx = (w, x, y) => (y * w + x) * 4;
 // dark-stone golem has no large neutral-white areas, so a global key beats a
 // border flood-fill here (which leaves enclosed white pockets opaque).
 // Downscaling later (premultiplied) feathers the hard edge into a clean outline.
-function keyOutBackground(png) {
+function keyOutBackground(png, mode = "white") {
   const { data } = png;
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i], g = data[i + 1], b = data[i + 2];
     const mn = Math.min(r, g, b), mx = Math.max(r, g, b);
-    data[i + 3] = mn >= 222 && mx - mn <= 22 ? 0 : 255;
+    if (mode === "dark") {
+      // Glow FX on a near-black field: alpha ramps with brightness so the black
+      // drops out and bright cores stay solid — keeps soft edges for additive draw.
+      data[i + 3] = mx <= 24 ? 0 : mx >= 96 ? 255 : Math.round(((mx - 24) / 72) * 255);
+    } else {
+      data[i + 3] = mn >= 222 && mx - mn <= 22 ? 0 : 255;
+    }
   }
 }
 
@@ -174,7 +194,7 @@ function sample(png, fx, fy, out) {
 
 function packOne(prefix, job) {
   const src = PNG.sync.read(readFileSync(join(SRC_DIR, `${prefix}_${job.name}.src.png`)));
-  keyOutBackground(src); // RGB white bg -> transparent before trimming
+  keyOutBackground(src, job.key); // RGB bg -> transparent before trimming
   const cols = job.frames / job.rows;
   if (!Number.isInteger(cols)) throw new Error(`${job.name}: frames/rows not integer`);
   const cellH = src.height / job.rows;
@@ -195,7 +215,8 @@ function packOne(prefix, job) {
   const maxH = Math.max(...frames.map((f) => f.h));
   const scale = Math.min(FIT_W / maxW, FIT_H / maxH);
 
-  // 3) repack into one CELL-tall strip, centered + feet on a shared baseline.
+  // 3) repack into one CELL-tall strip. Characters sit feet-on-baseline; FX are
+  //    centered in the cell (they expand outward from the middle).
   const out = new PNG({ width: CELL * job.frames, height: CELL });
   const baseline = CELL - FOOT_MARGIN;
   const px = [0, 0, 0, 0];
@@ -203,7 +224,7 @@ function packOne(prefix, job) {
     const sw = Math.max(1, Math.round(f.w * scale));
     const sh = Math.max(1, Math.round(f.h * scale));
     const originX = fi * CELL + Math.round((CELL - sw) / 2);
-    const originY = baseline - sh;
+    const originY = job.anchor === "center" ? Math.round((CELL - sh) / 2) : baseline - sh;
     for (let ty = 0; ty < sh; ty++) {
       for (let tx = 0; tx < sw; tx++) {
         const fx = f.x + (tx + 0.5) / scale - 0.5;
