@@ -8,9 +8,21 @@ import { loadStrip, drawStrip } from "./sprites.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
-canvas.width = CFG.arenaW;
-canvas.height = CFG.arenaH;
-const W = canvas.width, H = canvas.height;
+// World/logical size — all gameplay + drawing use these coords. The canvas
+// BACKING store is sized to the display's real pixels (high-DPI) so the upscaled
+// texture stays crisp instead of being a blurry 960x600 buffer stretched up.
+const W = CFG.arenaW, H = CFG.arenaH;
+function resizeCanvas() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2); // cap to keep the buffer sane
+  const cssW = canvas.clientWidth || W, cssH = canvas.clientHeight || H;
+  canvas.width = Math.max(1, Math.round(cssW * dpr));
+  canvas.height = Math.max(1, Math.round(cssH * dpr));
+  ctx.imageSmoothingQuality = "high";
+}
+resizeCanvas();
+addEventListener("resize", resizeCanvas);
+document.addEventListener("fullscreenchange", resizeCanvas);
+document.addEventListener("webkitfullscreenchange", resizeCanvas);
 
 let game = createGame();
 
@@ -263,8 +275,8 @@ function playerClip() {
 function toCanvas(e) {
   const r = canvas.getBoundingClientRect();
   return {
-    x: (e.clientX - r.left) * (canvas.width / r.width),
-    y: (e.clientY - r.top) * (canvas.height / r.height),
+    x: (e.clientX - r.left) / r.width * W,   // map display -> logical world coords
+    y: (e.clientY - r.top) / r.height * H,
   };
 }
 
@@ -377,6 +389,9 @@ requestAnimationFrame(frame);
 // --- render -----------------------------------------------------------------
 function render() {
   const p = game.player, b = game.boss;
+
+  // Map the 960x600 world onto the full-resolution backing store (high-DPI).
+  ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
 
   // Screen-shake offset (earthquake). Wrap the whole playfield so the floor,
   // characters and FX shake together; the border + HUD are drawn after restore.
