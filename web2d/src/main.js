@@ -6,6 +6,7 @@ import { stickVector, knobOffset, pointInCircle } from "./touch.js";
 import { Animator, frameIndex, clipDuration } from "./anim.js";
 import { loadStrip, drawStrip } from "./sprites.js";
 import { uiBegin, uiButton, uiZone, uiHit, panel, dim, label, roundRect } from "./ui.js";
+import * as rpg from "./rpg.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -40,7 +41,23 @@ const BOSSES = [
   { id: "golem", name: "Ancient Stone Golem", locked: false, blurb: "3 phases · smash · dash · rocks · quake" },
   { id: "wyrm", name: "Cinder Wyrm", locked: true, blurb: "Coming soon" },
 ];
-function startFight() { game = createGame(); scene = "playing"; }
+let profile = rpg.load();
+let rewardGiven = false;
+function startFight() {
+  game = createGame(rpg.gameOptsFromProfile(profile));
+  rewardGiven = false;
+  scene = "playing";
+}
+// Award XP from a finished fight (damage dealt, + bonus on a win) once.
+function grantReward() {
+  if (rewardGiven) return;
+  rewardGiven = true;
+  const dealt = game.boss.maxHp - game.boss.hp;
+  const xp = Math.round(dealt / 5) + (game.over === "won" ? 150 : 0);
+  game._levelsGained = rpg.addXp(profile, xp);
+  game._xpGained = xp;
+  rpg.save(profile);
+}
 
 const TOUCH = matchMedia("(pointer: coarse)").matches || "ontouchstart" in window;
 
@@ -491,6 +508,7 @@ function frame(now) {
 
   if (scene === "playing") {
     if (game.over) {
+      grantReward();
       if (keys.has("KeyR")) startFight();
     } else {
       step(game, readInput(), dt);
@@ -687,6 +705,9 @@ function render() {
   // HUD bars
   bar(20, 20, 300, 18, p.hp / p.maxHp, "#37d35a", `HP ${Math.ceil(p.hp)}/${p.maxHp}`);
   bar(20, 42, 220, 11, p.stamina / p.staminaMax, "#e6c84f", ""); // stamina
+  // level + xp readout
+  label(ctx, `LVL ${profile.level}`, 20, 74, { size: 13, align: "left", color: "#cfe0ff", bold: true });
+  bar(78, 64, 162, 9, profile.xp / rpg.xpToNext(profile.level), "#7aa2ff", "");
   const bossW = 400, bossX = W - bossW - 20;
   bar(bossX, 20, bossW, 18, b.hp / b.maxHp, "#e7544f", `BOSS ${Math.ceil(b.hp)}/${b.maxHp}`);
   // phase segment dividers (the golem escalates each time a segment empties)
@@ -711,6 +732,8 @@ function render() {
     ctx.fillStyle = game.over === "won" ? "#7CFC9A" : "#ff7a7a";
     ctx.font = "bold 56px system-ui, sans-serif";
     ctx.fillText(game.over === "won" ? "VICTORY" : "DEFEATED", W / 2, H / 2 - 30);
+    const lvUp = game._levelsGained ? `  ·  LEVEL UP ×${game._levelsGained}` : "";
+    label(ctx, `+${game._xpGained || 0} XP${lvUp}`, W / 2, H / 2 - 2, { size: 18, color: "#cfe0ff" });
     uiBegin();
     uiButton(ctx, "retry", "Retry", W / 2 - 200, H / 2 + 16, 180, 52, { accent: "#2f7a4f" });
     uiButton(ctx, "menu", "Menu", W / 2 + 20, H / 2 + 16, 180, 52);
