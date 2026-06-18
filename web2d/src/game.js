@@ -145,14 +145,36 @@ function _hitPlayer(s, raw) {
   if (p.hp <= 0) s.over = "lost";
 }
 
-// Advance boss rocks (big + scatter), damage the player on contact, cull strays.
+// Push the player out of a landed boulder so it acts as a solid obstacle.
+function _resolveObstacle(p, rk) {
+  const dx = p.x - rk.x, dy = p.y - rk.y;
+  const d = Math.hypot(dx, dy), min = rk.r + p.r;
+  if (d < min && d > 1e-6) {
+    p.x = clamp(rk.x + (dx / d) * min, p.r, CFG.arenaW - p.r);
+    p.y = clamp(rk.y + (dy / d) * min, p.r, CFG.arenaH - p.r);
+  }
+}
+
+// Advance boss rocks. A big rock flies to its target, deals impact damage in
+// passing, then LANDS and persists as a solid obstacle. Small scatter rocks
+// damage on contact and are culled when they leave the arena.
 function _rocksUpdate(s, dt) {
   const p = s.player;
   const kept = [];
   for (const rk of s.rocks) {
+    if (rk.landed) { _resolveObstacle(p, rk); kept.push(rk); continue; } // permanent boulder
+
     rk.x += rk.vx * dt;
     rk.y += rk.vy * dt;
-    if (dist(rk, p) <= rk.r + p.r) { _hitPlayer(s, rk.dmg); continue; }
+    if (!rk.hit && dist(rk, p) <= rk.r + p.r) { rk.hit = true; _hitPlayer(s, rk.dmg); }
+
+    if (rk.big) {
+      rk.travel -= Math.hypot(rk.vx, rk.vy) * dt;
+      if (rk.travel <= 0) { rk.x = rk.tx; rk.y = rk.ty; rk.vx = 0; rk.vy = 0; rk.landed = true; }
+      kept.push(rk); // big rocks land in-arena; never culled
+      continue;
+    }
+    if (rk.hit) continue; // small rock spent on impact
     const m = 30;
     if (rk.x < -m || rk.x > CFG.arenaW + m || rk.y < -m || rk.y > CFG.arenaH + m) continue;
     kept.push(rk);
@@ -173,6 +195,8 @@ function _arrowsUpdate(s, dt) {
       if (b.hp <= 0) s.over = "won";
       continue; // arrow consumed on hit
     }
+    // landed boulders block shots (cover for the golem)
+    if (s.rocks.some((rk) => rk.landed && dist(a, rk) <= rk.r + CFG.arrowR)) continue;
     const m = 24;
     if (a.x < -m || a.x > CFG.arenaW + m || a.y < -m || a.y > CFG.arenaH + m) continue;
     kept.push(a);
@@ -228,9 +252,12 @@ function _bossActivate(s) {
     case "bigrock": {
       b.t = 0.12; // brief throw pose; the rock lives in s.rocks
       const u = unit(sub(p, b));
+      // Lobbed at the player's current spot; it lands there and stays as a
+      // solid boulder obstacle (travel = distance it covers before landing).
       s.rocks.push({
         x: b.x, y: b.y, vx: u.x * CFG.bigRockSpeed, vy: u.y * CFG.bigRockSpeed,
         r: CFG.bigRockR, dmg: CFG.bigRockDmg, big: true,
+        tx: p.x, ty: p.y, travel: dist(b, p), landed: false, hit: false,
       });
       break;
     }

@@ -114,13 +114,31 @@ test("dash charge deals contact damage, and i-frames negate it", () => {
   assert.equal(mk(0.5), 100, "i-frames negate the dash");
 });
 
-test("a thrown rock damages the player on contact", () => {
+test("a scatter rock damages the player on contact and is spent", () => {
   const g = createGame();
   g.boss.x = 480; g.boss.y = 300; g.player.x = 480; g.player.y = 320; g.player.invuln = 0;
-  g.rocks.push({ x: 480, y: 310, vx: 0, vy: 200, r: CFG.bigRockR, dmg: CFG.bigRockDmg, big: true });
+  g.rocks.push({ x: 480, y: 310, vx: 0, vy: 200, r: CFG.smallRockR, dmg: CFG.smallRockDmg, big: false, hit: false });
   step(g, input(), 1 / 60);
-  assert.equal(100 - g.player.hp, CFG.bigRockDmg);
-  assert.equal(g.rocks.length, 0, "rock consumed on hit");
+  assert.equal(100 - g.player.hp, CFG.smallRockDmg);
+  assert.equal(g.rocks.length, 0, "scatter rock consumed on hit");
+});
+
+test("a big rock lands and persists as a solid obstacle", () => {
+  const g = createGame();
+  g.player.x = 100; g.player.y = 100; g.player.invuln = 99; // out of the way
+  g.rocks.push({
+    x: 480, y: 300, vx: 0, vy: 0, r: CFG.bigRockR, dmg: CFG.bigRockDmg, big: true,
+    tx: 480, ty: 300, travel: 0, landed: false, hit: false,
+  });
+  step(g, input(), 1 / 60); // travel<=0 -> lands and stays
+  assert.equal(g.rocks.length, 1);
+  assert.equal(g.rocks[0].landed, true);
+
+  // the player cannot walk through it
+  g.player.x = 480 - (CFG.bigRockR + g.player.r) + 6; g.player.y = 300;
+  step(g, input({ move: { x: 1, y: 0 } }), 1 / 60); // shove right into the boulder
+  const gap = Math.hypot(g.player.x - 480, g.player.y - 300);
+  assert.ok(gap >= CFG.bigRockR + g.player.r - 0.5, "player is pushed out of the boulder");
 });
 
 test("scatter fires rocks in all directions", () => {

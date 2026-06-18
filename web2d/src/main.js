@@ -332,11 +332,18 @@ function render() {
     ctx.fillText("GOLEM", b.x, b.y + 6);
   }
 
-  // boss rocks in flight (big rock + scatter)
+  // boss rocks: scatter pellets, the flying big rock, and landed boulders that
+  // persist as solid obstacles.
   for (const rk of game.rocks) {
-    ctx.fillStyle = rk.big ? "#7c6b54" : "#8a8170";
+    if (rk.landed) {
+      ctx.fillStyle = "rgba(0,0,0,0.35)"; // grounded shadow
+      ctx.beginPath();
+      ctx.ellipse(rk.x, rk.y + rk.r * 0.7, rk.r * 1.1, rk.r * 0.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = rk.landed ? "#6b5c47" : rk.big ? "#7c6b54" : "#8a8170";
     ctx.strokeStyle = "rgba(20,16,12,0.7)";
-    ctx.lineWidth = 3;
+    ctx.lineWidth = rk.landed ? 4 : 3;
     circle(rk.x, rk.y, rk.r, true, true);
   }
 
