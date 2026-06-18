@@ -214,18 +214,27 @@ function render() {
   ctx.lineWidth = 4;
   ctx.strokeRect(2, 2, W - 4, H - 4);
 
-  // slam telegraph
+  // slam danger zone — a ring on the ground AROUND the golem that matches the
+  // smash animation. The ring IS the hitbox: windup charges it red, the strike
+  // flashes it. Drawn before the boss so it reads as on the ground beneath it.
   if (b.slam.active) {
+    const cx = b.slam.x, cy = b.slam.y, R = CFG.slamR;
     if (b.state === "windup") {
-      const k = 1 - b.t / CFG.windup;
-      ctx.fillStyle = `rgba(230,60,50,${0.12 + 0.35 * k})`;
-      ctx.strokeStyle = `rgba(255,90,70,${0.5 + 0.5 * k})`;
-    } else {
-      ctx.fillStyle = "rgba(255,140,60,0.85)";
-      ctx.strokeStyle = "rgba(255,180,90,1)";
+      const k = 1 - b.t / CFG.windup; // 0 -> 1 as the smash charges
+      ctx.fillStyle = `rgba(230,60,50,${0.05 + 0.16 * k})`;
+      circle(cx, cy, R, true, false);
+      ctx.strokeStyle = `rgba(255,90,70,${0.45 + 0.55 * k})`;
+      ctx.lineWidth = 3 + 4 * k;
+      ctx.setLineDash([16, 12]);
+      circle(cx, cy, R, false, true);
+      ctx.setLineDash([]);
+    } else if (b.state === "strike") {
+      ctx.fillStyle = "rgba(255,150,70,0.5)";
+      circle(cx, cy, R, true, false);
+      ctx.strokeStyle = "rgba(255,220,140,1)";
+      ctx.lineWidth = 7;
+      circle(cx, cy, R, false, true);
     }
-    ctx.lineWidth = 3;
-    circle(b.slam.x, b.slam.y, CFG.slamR, true, true);
   }
 
   // boss — animated sprite if its art is loaded, else the placeholder circle
