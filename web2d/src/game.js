@@ -31,10 +31,11 @@ export const CFG = {
   playerR: 14, playerSpeed: 220, meleeRange: 70,
   attackCd: 0.35, heavyAttackCd: 0.7, arrowSpeed: 720, arrowR: 6,
   dodgeSpeed: 560, dodgeTime: 0.22, dodgeIframes: 0.30, hitInvuln: 0.6,
-  // Stamina: every action drains it at its own rate; it regenerates after a
-  // short pause. Dodge / shoot / power shot are gated when there isn't enough.
-  staminaMax: 100, staRegen: 22, staRegenDelay: 0.5,
-  staMove: 5, staShoot: 10, staHeavy: 26, staDodge: 24,
+  // Stamina: actions drain it at their own rate; it recharges fast while idle
+  // and slowly while walking (which costs a tiny trickle). Shoot/dodge/power
+  // pause regen briefly and are gated when there isn't enough.
+  staminaMax: 120, staRegen: 28, staRegenWalk: 9, staRegenDelay: 0.5,
+  staMove: 2, staShoot: 8, staHeavy: 20, staDodge: 18,
   // Boss. Every attack runs chase -> windup (telegraph) -> strike (active) ->
   // recover, and any hit is negated while the player is invulnerable. The golem
   // has 3 health-bar segments (phases): depleting one staggers it briefly, then
@@ -123,7 +124,7 @@ export function step(s, input, dt) {
   }
 
   // Movement (dodging overrides steering)
-  let vx = 0, vy = 0;
+  let vx = 0, vy = 0, moving = false;
   if (p.dodge.t > 0) {
     p.dodge.t = Math.max(0, p.dodge.t - dt);
     vx = p.dodge.dir.x * CFG.dodgeSpeed;
@@ -132,8 +133,8 @@ export function step(s, input, dt) {
     const m = unit(i.move);
     if (m.x || m.y) {
       p.facing = m;
-      p.stamina -= CFG.staMove * dt; // moving drains a trickle
-      p.staRegenT = CFG.staRegenDelay;
+      moving = true;
+      p.stamina -= CFG.staMove * dt; // tiny trickle; does NOT pause regen
     }
     vx = m.x * p.speed;
     vy = m.y * p.speed;
@@ -163,8 +164,11 @@ export function step(s, input, dt) {
     }
   }
 
-  // Stamina regen (after the short post-action pause) + clamp.
-  if (p.staRegenT <= 0) p.stamina = Math.min(p.staminaMax, p.stamina + CFG.staRegen * dt);
+  // Stamina regen — fast while idle, slow while walking (after the post-action pause).
+  if (p.staRegenT <= 0) {
+    const rate = moving ? CFG.staRegenWalk : CFG.staRegen;
+    p.stamina = Math.min(p.staminaMax, p.stamina + rate * dt);
+  }
   p.stamina = Math.max(0, p.stamina);
 
   _arrowsUpdate(s, dt);
