@@ -14,34 +14,41 @@ test("new game: derived HP and full boss HP", () => {
   assert.equal(g.over, null);
 });
 
-test("light attack hits the boss when facing it in range", () => {
+test("firing spawns an arrow travelling in the facing direction", () => {
   const g = createGame();
-  // Put the boss right in front of the player, within reach.
-  g.player.x = 480; g.player.y = 300; g.player.facing = { x: 0, y: -1 };
-  g.boss.x = 480; g.boss.y = 300 - (CFG.meleeRange); g.boss.state = "recover"; g.boss.t = 99;
-  const before = g.boss.hp;
+  g.player.facing = { x: 0, y: -1 }; // aiming up
   step(g, input({ attack: true }), 1 / 60);
-  assert.ok(g.boss.hp < before, "boss should take damage");
-  assert.equal(before - g.boss.hp, 51);
+  assert.equal(g.arrows.length, 1);
+  assert.ok(g.arrows[0].vy < 0 && g.arrows[0].vx === 0, "arrow flies up");
 });
 
-test("attack misses when the boss is out of range", () => {
+test("an arrow that reaches the boss damages it for the light amount", () => {
   const g = createGame();
-  g.player.x = 100; g.player.y = 300; g.player.facing = { x: 0, y: -1 };
-  g.boss.x = 800; g.boss.y = 300; g.boss.state = "recover"; g.boss.t = 99;
+  g.player.x = 480; g.player.y = 500; g.player.facing = { x: 0, y: -1 };
+  g.boss.x = 480; g.boss.y = 200; g.boss.state = "recover"; g.boss.t = 99; // hold still
   const before = g.boss.hp;
-  step(g, input({ attack: true }), 1 / 60);
-  assert.equal(g.boss.hp, before);
+  step(g, input({ attack: true }), 1 / 60); // fire
+  for (let k = 0; k < 60 && g.boss.hp === before; k++) step(g, input(), 1 / 60);
+  assert.equal(before - g.boss.hp, 51, "light arrow deals 51");
 });
 
-test("attack respects cooldown (one hit per press window)", () => {
+test("firing respects cooldown (one arrow per press window)", () => {
   const g = createGame();
-  g.player.x = 480; g.player.y = 300; g.player.facing = { x: 0, y: -1 };
-  g.boss.x = 480; g.boss.y = 240; g.boss.state = "recover"; g.boss.t = 99;
+  g.player.facing = { x: 0, y: -1 };
   step(g, input({ attack: true }), 1 / 60);
-  const afterFirst = g.boss.hp;
+  assert.equal(g.arrows.length, 1);
   step(g, input({ attack: true }), 1 / 60); // still on cooldown
-  assert.equal(g.boss.hp, afterFirst, "second immediate attack is on cooldown");
+  assert.equal(g.arrows.length, 1, "second immediate shot is on cooldown");
+});
+
+test("an arrow that misses leaves the arena and is culled", () => {
+  const g = createGame();
+  g.player.x = 480; g.player.y = 300; g.player.facing = { x: 1, y: 0 }; // shoot right, past the boss
+  g.boss.x = 480; g.boss.y = 200; g.boss.state = "recover"; g.boss.t = 99;
+  step(g, input({ attack: true }), 1 / 60);
+  for (let k = 0; k < 120 && g.arrows.length > 0; k++) step(g, input(), 1 / 60);
+  assert.equal(g.arrows.length, 0, "arrow culled off-arena");
+  assert.equal(g.boss.hp, g.boss.maxHp, "boss never hit");
 });
 
 test("boss slam damages a player who stays in the ring", () => {
@@ -72,11 +79,12 @@ test("stepping out of the ring avoids the slam", () => {
   assert.equal(g.player.hp, 100);
 });
 
-test("boss death ends the game as a win", () => {
+test("an arrow that brings boss hp to 0 ends the game as a win", () => {
   const g = createGame();
   g.player.x = 480; g.player.y = 300; g.player.facing = { x: 0, y: -1 };
-  g.boss.x = 480; g.boss.y = 240; g.boss.hp = 10; g.boss.state = "recover"; g.boss.t = 99;
-  step(g, input({ attack: true }), 1 / 60);
+  g.boss.x = 480; g.boss.y = 200; g.boss.hp = 10; g.boss.state = "recover"; g.boss.t = 99;
+  step(g, input({ attack: true }), 1 / 60); // fire
+  for (let k = 0; k < 60 && g.over === null; k++) step(g, input(), 1 / 60);
   assert.equal(g.boss.hp, 0);
   assert.equal(g.over, "won");
 });

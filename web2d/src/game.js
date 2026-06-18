@@ -8,13 +8,17 @@ import { maxHP, lightDamage, heavyDamage, damageTaken } from "./stats.js";
 
 export const CFG = {
   arenaW: 960, arenaH: 600,
-  // Player
-  playerR: 14, playerSpeed: 220, attackCd: 0.35, meleeRange: 70,
+  // Player (archer): shoots arrows in the facing direction. Light = quick shot,
+  // heavy = a slower, stronger charged shot. meleeRange is kept as the boss's
+  // chase-stop distance, not a player reach.
+  playerR: 14, playerSpeed: 220, meleeRange: 70,
+  attackCd: 0.35, heavyAttackCd: 0.7, arrowSpeed: 720, arrowR: 6,
   dodgeSpeed: 560, dodgeTime: 0.22, dodgeIframes: 0.30, hitInvuln: 0.6,
   // Boss (telegraphed slam: chase -> windup -> strike -> recover). The slam is a
   // melee smash centered ON the golem (matches the animation), so slamR is how
-  // far the shockwave around it reaches — not a ranged AoE at the player.
-  bossR: 40, bossSpeed: 95, bossMaxHp: 600,
+  // far the shockwave around it reaches — not a ranged AoE at the player. The
+  // golem is fast and relentless so a ranged archer can't trivially kite it.
+  bossR: 40, bossSpeed: 165, bossMaxHp: 600,
   slamR: 130, windup: 1.0, strike: 0.15, recover: 0.6, bossCd: 1.6, bossDmg: 22,
 };
 
@@ -22,7 +26,6 @@ export const CFG = {
 const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y });
 const len = (v) => Math.hypot(v.x, v.y);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-const dot = (a, b) => a.x * b.x + a.y * b.y;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 function unit(v) {
   const l = len(v);
@@ -56,6 +59,7 @@ export function createGame(opts = {}) {
       slam: { x: 0, y: 0, active: false },
       lastHit: 0,
     },
+    arrows: [], // in-flight player arrows: { x, y, vx, vy, dmg, heavy }
   };
 }
 
@@ -93,22 +97,45 @@ export function step(s, input, dt) {
   p.x = clamp(p.x + vx * dt, p.r, CFG.arenaW - p.r);
   p.y = clamp(p.y + vy * dt, p.r, CFG.arenaH - p.r);
 
-  // Attack (light or heavy) — front arc, within range.
+  // Attack — fire an arrow in the facing direction. Heavy = a stronger, slower
+  // charged shot; light = a quick shot. Can't fire mid-dodge.
   if ((i.attack || i.heavy) && p.attackCd <= 0 && p.dodge.t <= 0) {
-    p.attackCd = CFG.attackCd;
-    const to = sub(b, p);
-    if (len(to) <= CFG.meleeRange + b.r && dot(p.facing, unit(to)) >= 0) {
-      const dmg = i.heavy
-        ? heavyDamage(p.str, p.dex, p.weaponDmg)
-        : lightDamage(p.str, p.dex, p.weaponDmg);
-      b.hp = Math.max(0, b.hp - dmg);
-      b.lastHit = dmg;
-      if (b.hp <= 0) s.over = "won";
-    }
+    const heavy = !!i.heavy; // heavy wins if both are held
+    const dir = unit(p.facing);
+    const dmg = heavy
+      ? heavyDamage(p.str, p.dex, p.weaponDmg)
+      : lightDamage(p.str, p.dex, p.weaponDmg);
+    s.arrows.push({
+      x: p.x + dir.x * p.r, y: p.y + dir.y * p.r,
+      vx: dir.x * CFG.arrowSpeed, vy: dir.y * CFG.arrowSpeed,
+      dmg, heavy,
+    });
+    p.attackCd = heavy ? CFG.heavyAttackCd : CFG.attackCd;
   }
 
+  _arrowsUpdate(s, dt);
   _bossUpdate(s, dt);
   return s;
+}
+
+// Advance arrows, resolve boss hits, and cull anything that leaves the arena.
+function _arrowsUpdate(s, dt) {
+  const b = s.boss;
+  const kept = [];
+  for (const a of s.arrows) {
+    a.x += a.vx * dt;
+    a.y += a.vy * dt;
+    if (b.hp > 0 && dist(a, b) <= b.r + CFG.arrowR) {
+      b.hp = Math.max(0, b.hp - a.dmg);
+      b.lastHit = a.dmg;
+      if (b.hp <= 0) s.over = "won";
+      continue; // arrow consumed on hit
+    }
+    const m = 24;
+    if (a.x < -m || a.x > CFG.arenaW + m || a.y < -m || a.y > CFG.arenaH + m) continue;
+    kept.push(a);
+  }
+  s.arrows = kept;
 }
 
 function _bossUpdate(s, dt) {

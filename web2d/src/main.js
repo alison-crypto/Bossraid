@@ -67,6 +67,19 @@ const GOLEM = {
 };
 const bossAnim = new Animator();
 
+// --- player (archer) sprite sheet ------------------------------------------
+// Same drop-in scheme as the boss. Missing files fall back to the placeholder.
+const PLAYER_DISPLAY_H = 96; // on-screen height of the archer in px
+const ARCHER = {
+  idle:  loadStrip("./assets/archer_idle.png",  6, 8,  true),
+  walk:  loadStrip("./assets/archer_walk.png",  8, 11, true),
+  shoot: loadStrip("./assets/archer_shoot.png", 6, 16, false),
+  hit:   loadStrip("./assets/archer_hit.png",   4, 16, false),
+  death: loadStrip("./assets/archer_death.png", 6, 9,  false),
+  dodge: loadStrip("./assets/archer_dodge.png", 6, 18, false),
+};
+const playerAnim = new Animator();
+
 // View-only signals the sim doesn't expose directly: a brief flinch when the
 // boss takes damage, and whether it moved this frame (it chases in "idle").
 let bossHitT = 0;       // seconds left on the hit-react flinch
@@ -95,6 +108,43 @@ function bossClip() {
   if (bossHitT > 0) return "hit";
   if (b.state === "idle" && bossMoving) return "walk";
   return "idle"; // grab / rune-surge clips slot in once those states exist
+}
+
+// View-only signals for the player: a brief shoot animation when an arrow is
+// fired, a flinch when damaged, and whether the player moved this frame.
+let playerShootT = 0;
+let playerHitT = 0;
+let prevPlayerHp = null;
+let prevArrowCount = 0;
+let prevPlayerPos = null;
+let playerMoving = false;
+
+function updatePlayerAnimSignals(dt) {
+  const p = game.player;
+  if (game.arrows.length > prevArrowCount) {
+    playerShootT = clipDuration(ARCHER.shoot.fps, ARCHER.shoot.frames);
+  }
+  prevArrowCount = game.arrows.length;
+  if (prevPlayerHp !== null && p.hp < prevPlayerHp && p.hp > 0) {
+    playerHitT = clipDuration(ARCHER.hit.fps, ARCHER.hit.frames);
+  }
+  prevPlayerHp = p.hp;
+  playerShootT = Math.max(0, playerShootT - dt);
+  playerHitT = Math.max(0, playerHitT - dt);
+  const moved = prevPlayerPos ? Math.hypot(p.x - prevPlayerPos.x, p.y - prevPlayerPos.y) : 0;
+  playerMoving = moved > 0.5;
+  prevPlayerPos = { x: p.x, y: p.y };
+}
+
+// Map player state -> clip. Priority: death > dodge > shoot > hit > walk > idle.
+function playerClip() {
+  const p = game.player;
+  if (game.over === "lost") return "death";
+  if (p.dodge.t > 0) return "dodge";
+  if (playerShootT > 0) return "shoot";
+  if (playerHitT > 0) return "hit";
+  if (playerMoving) return "walk";
+  return "idle";
 }
 
 function toCanvas(e) {
@@ -199,6 +249,10 @@ function frame(now) {
   bossAnim.play(bossClip());
   bossAnim.tick(dt);
 
+  updatePlayerAnimSignals(dt);
+  playerAnim.play(playerClip());
+  playerAnim.tick(dt);
+
   render();
   requestAnimationFrame(frame);
 }
@@ -250,16 +304,39 @@ function render() {
     ctx.fillText("GOLEM", b.x, b.y + 6);
   }
 
-  // player
-  const inv = p.invuln > 0 && Math.floor(game.t * 30) % 2 === 0;
-  ctx.fillStyle = inv ? "#9fd0ff" : "#3aa0ff";
-  circle(p.x, p.y, p.r, true, false);
-  ctx.strokeStyle = "#dff0ff";
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(p.x, p.y);
-  ctx.lineTo(p.x + p.facing.x * (p.r + 10), p.y + p.facing.y * (p.r + 10));
-  ctx.stroke();
+  // arrows in flight (drawn under the characters)
+  for (const a of game.arrows) {
+    ctx.save();
+    ctx.translate(a.x, a.y);
+    ctx.rotate(Math.atan2(a.vy, a.vx));
+    ctx.strokeStyle = a.heavy ? "#ffd27a" : "#e8eefc";
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.lineWidth = a.heavy ? 4 : 3;
+    ctx.beginPath(); ctx.moveTo(-22, 0); ctx.lineTo(0, 0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-8, -4); ctx.lineTo(-8, 4); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  // player (archer) — animated sprite if loaded, else the placeholder circle.
+  // Flicker while invulnerable (after a hit / mid-dodge i-frames).
+  const flicker = p.invuln > 0 && Math.floor(game.t * 30) % 2 === 0;
+  const pclip = ARCHER[playerAnim.clip];
+  const pidx = pclip ? frameIndex(playerAnim.t, pclip.fps, pclip.frames, pclip.loop) : 0;
+  ctx.globalAlpha = flicker ? 0.45 : 1;
+  const drewPlayer = pclip
+    ? drawStrip(ctx, pclip, pidx, p.x, p.y + p.r, PLAYER_DISPLAY_H, p.facing.x < 0)
+    : false;
+  ctx.globalAlpha = 1;
+  if (!drewPlayer) {
+    ctx.fillStyle = flicker ? "#9fd0ff" : "#3aa0ff";
+    circle(p.x, p.y, p.r, true, false);
+    ctx.strokeStyle = "#dff0ff";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    ctx.lineTo(p.x + p.facing.x * (p.r + 10), p.y + p.facing.y * (p.r + 10));
+    ctx.stroke();
+  }
 
   // HUD bars
   bar(20, 20, 300, 18, p.hp / p.maxHp, "#37d35a", `HP ${Math.ceil(p.hp)}/${p.maxHp}`);
@@ -270,7 +347,7 @@ function render() {
     ctx.fillStyle = "#9aa3b5";
     ctx.font = "14px system-ui, sans-serif";
     ctx.textAlign = "left";
-    ctx.fillText("WASD move · J attack · L heavy · Space dodge", 20, H - 16);
+    ctx.fillText("WASD move · J shoot · L power shot · Space dodge", 20, H - 16);
   }
 
   if (game.over) {
