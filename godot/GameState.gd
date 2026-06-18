@@ -20,15 +20,34 @@ var selected := 0
 # speed. ranged weapons fire an arrow (kinetic-energy projectile). The held mesh
 # is a placeholder box (len x thick) until real weapon models arrive.
 # Available merged clips: Slash, SlashB, Heavy, Stab, Bow.
+# weight + str_req drive the dual-wield grip rules (see resolve_grip): a weapon
+# can be wielded one-handed only if STR >= str_req; otherwise it's forced
+# two-handed. `mesh` is the real weapon model (models/weapons/), replacing the
+# placeholder box when weapon visuals are wired. `type` groups movesets.
 var weapons := [
-	{"name": "Sword", "light": ["Slash", "SlashB"], "heavy": "Heavy", "ranged": false, "damage": 50, "speed": 1.0, "len": 1.1, "thick": 0.06, "color": Color(0.85, 0.9, 1.0)},
-	{"name": "Great Sword", "light": ["Heavy", "Slash"], "heavy": "Heavy", "ranged": false, "damage": 80, "speed": 0.8, "len": 1.8, "thick": 0.11, "color": Color(0.8, 0.82, 0.9)},
-	{"name": "Dagger", "light": ["Slash", "SlashB"], "heavy": "Stab", "ranged": false, "damage": 25, "speed": 1.5, "len": 0.5, "thick": 0.045, "color": Color(0.9, 0.95, 1.0)},
-	{"name": "Spear", "light": ["Stab"], "heavy": "Stab", "ranged": false, "damage": 55, "speed": 1.1, "len": 2.3, "thick": 0.05, "color": Color(0.72, 0.62, 0.5)},
-	{"name": "Axe", "light": ["Heavy", "Slash"], "heavy": "Heavy", "ranged": false, "damage": 70, "speed": 0.9, "len": 0.9, "thick": 0.16, "color": Color(0.6, 0.62, 0.66)},
-	{"name": "Bow", "light": ["Bow"], "heavy": "Bow", "ranged": true, "damage": 12, "speed": 1.0, "len": 1.0, "thick": 0.05, "color": Color(0.55, 0.38, 0.2)},
+	{"name": "Sword", "light": ["Slash", "SlashB"], "heavy": "Heavy", "ranged": false, "damage": 50, "speed": 1.0, "len": 1.1, "thick": 0.06, "color": Color(0.85, 0.9, 1.0), "weight": 6, "str_req": 8, "type": "sword", "mesh": "res://models/weapons/sword1.glb"},
+	{"name": "Great Sword", "light": ["Heavy", "Slash"], "heavy": "Heavy", "ranged": false, "damage": 80, "speed": 0.8, "len": 1.8, "thick": 0.11, "color": Color(0.8, 0.82, 0.9), "weight": 16, "str_req": 20, "type": "sword", "mesh": "res://models/weapons/sword2.glb"},
+	{"name": "Dagger", "light": ["Slash", "SlashB"], "heavy": "Stab", "ranged": false, "damage": 25, "speed": 1.5, "len": 0.5, "thick": 0.045, "color": Color(0.9, 0.95, 1.0), "weight": 2, "str_req": 4, "type": "dagger", "mesh": "res://models/weapons/dagger.glb"},
+	{"name": "Spear", "light": ["Stab"], "heavy": "Stab", "ranged": false, "damage": 55, "speed": 1.1, "len": 2.3, "thick": 0.05, "color": Color(0.72, 0.62, 0.5), "weight": 9, "str_req": 12, "type": "polearm", "mesh": "res://models/weapons/staff.glb"},
+	{"name": "Axe", "light": ["Heavy", "Slash"], "heavy": "Heavy", "ranged": false, "damage": 70, "speed": 0.9, "len": 0.9, "thick": 0.16, "color": Color(0.6, 0.62, 0.66), "weight": 11, "str_req": 14, "type": "axe", "mesh": "res://models/weapons/axe_small.glb"},
+	{"name": "Bow", "light": ["Bow"], "heavy": "Bow", "ranged": true, "damage": 12, "speed": 1.0, "len": 1.0, "thick": 0.05, "color": Color(0.55, 0.38, 0.2), "weight": 5, "str_req": 7, "type": "bow", "mesh": "res://models/weapons/bow.glb"},
 ]
 var weapon := 0
+
+# Shields (off-hand). def adds to DEF; block multiplies incoming damage when
+# guarding (lower = better). Worn in the LEFT hand only. Cycle/equip via UI.
+var shields := [
+	{"name": "Buckler", "def": 6, "block": 0.5, "weight": 3, "str_req": 5, "mesh": "res://models/weapons/shield.glb"},
+	{"name": "Kite Shield", "def": 12, "block": 0.4, "weight": 8, "str_req": 11, "mesh": "res://models/weapons/shield.glb"},
+]
+
+# Per-hand loadout for dual-wield. Each hand: {"kind": "weapon"|"shield"|"empty",
+# "idx": int}. `weapon` above stays the active right-hand weapon for the current
+# (single-weapon) combat code; the per-hand system layers on top of it.
+var hands := {
+	"right": {"kind": "weapon", "idx": 0},
+	"left": {"kind": "empty", "idx": -1},
+}
 
 # Armor (equipment). def subtracts directly from incoming damage, after any
 # block/parry reduction. Stat-only for now (no mesh). Cycle in-game with [R].
@@ -52,13 +71,13 @@ var boot := 0
 # --- Progression / inventory ------------------------------------------------
 # Owned gear: indices into the weapons/armors/boots tables. You can only equip
 # what you own; boss-kill loot expands these. Starting kit: one of each (basics).
-var owned_weapons := [0]   # Sword
-var owned_armors := [0]    # Cloth
-var owned_boots := [0]     # Bare Feet
+var owned_weapons := [0, 1, 2, 3, 4, 5]   # all weapons (Sword..Bow)
+var owned_armors := [0, 1, 2, 3]          # all armor (Cloth..Plate)
+var owned_boots := [0, 1, 2]              # all boots (Bare Feet..Steel Greaves)
 
 # Consumables (distinct from equipment): id -> {name, qty, heal}.
 var consumables := {
-	"health_potion": {"name": "Health Potion", "qty": 2, "heal": 40},
+	"health_potion": {"name": "Health Potion", "qty": 10, "heal": 40},
 }
 
 # Progression: a flat skill-point reward per boss kill (no XP curve yet).
@@ -106,6 +125,38 @@ func owns_armor(i: int) -> bool:
 
 func owns_boots(i: int) -> bool:
 	return owned_boots.has(i)
+
+
+# Dual-wield grip resolver (stat-gated design). Given STR, decide how each hand
+# is gripped from the current `hands` loadout:
+#   empty hand                          -> "empty"
+#   shield (off-hand)                   -> "one_handed"
+#   weapon with STR >= str_req, other
+#       hand also armed                 -> "one_handed"  (true dual-wield)
+#   weapon with empty off-hand          -> "two_handed"  (grip alone for power)
+#   weapon with STR < str_req           -> "two_handed"  (too heavy to one-hand)
+# Returns {"right","left": grip, "two_handed": bool, "dual": bool}.
+func resolve_grip(str_stat: int) -> Dictionary:
+	var r: Dictionary = hands["right"]
+	var l: Dictionary = hands["left"]
+	var r_weap: bool = r.get("kind", "empty") == "weapon"
+	var l_weap: bool = l.get("kind", "empty") == "weapon"
+	var r_req: int = int(weapons[int(r.get("idx", 0))].get("str_req", 0)) if r_weap else 0
+	var l_req: int = int(weapons[int(l.get("idx", 0))].get("str_req", 0)) if l_weap else 0
+	var r_heavy: bool = r_weap and str_stat < r_req
+	var l_heavy: bool = l_weap and str_stat < l_req
+	var both_armed: bool = r_weap and l_weap
+	var two_handed: bool = (r_weap and (r_heavy or not l_weap)) or (l_weap and (l_heavy or not r_weap))
+	var grip := {"right": "empty", "left": "empty", "two_handed": two_handed, "dual": both_armed and not two_handed}
+	if r.get("kind", "empty") == "shield":
+		grip["right"] = "one_handed"
+	elif r_weap:
+		grip["right"] = "two_handed" if two_handed else "one_handed"
+	if l.get("kind", "empty") == "shield":
+		grip["left"] = "one_handed"
+	elif l_weap:
+		grip["left"] = "two_handed" if two_handed else "one_handed"
+	return grip
 
 
 func add_gear(kind: String, idx: int) -> void:

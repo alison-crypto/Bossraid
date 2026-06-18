@@ -26,7 +26,9 @@ animation, physics, scene tooling, and room to grow.
 Everything is built in code in `Main.gd` (the `.tscn` is just a Node3D running
 it). Implemented so far:
 
-- Open ground (infinite floor) + sky/sun.
+- Open ground (200 m plane, PBR stone-tile texture) + **panorama skybox** + sun.
+  Env assets in `env/` (`sky.png`, `ground_albedo/normal/rough.png`); swap by
+  replacing those files. Big stylized library lives on the Drive (see below).
 - **Third-person player** (`CharacterBody3D`) loading an animated glTF
   (`models/Soldier.glb`, Idle/Run), manual behind-the-player camera (yaw→pitch→
   camera), layout-independent WASD + sprint + jump, model faces movement
@@ -34,7 +36,25 @@ it). Implemented so far:
 - **Combat:** left-click melee (range + front-arc), right-click ranged bolt;
   floating `Label3D` damage numbers.
 - **Training dummy** (HP + regen) for practice.
-- **Floor-1 boss (Pumpkin Golem):** the `Pumpkinhulk` model scaled to ~3.4 m;
+- **Floor-1 boss (Stone Golem):** `models/Golem.glb` (a Sketchfab rock-golem
+  sculpt decimated 1.05M→60k tris in Blender, Mixamo auto-rigged to the standard
+  `mixamorig:*` skeleton, FBX→glb), scaled to ~4 m. Animated by **retargeting the
+  orc clips** (`orc_idle` / `orc_walk` / `orc_slam`) via `AnimUtil.merge` — they
+  stand upright and animate visibly on this rig. (The golem's *own* baked
+  `mixamo.com` clip plays but barely moves — ~4.5° — so it reads as static; orc
+  retarget gives ~20°.) NOTE: an earlier orc "collapse" was the 172x scale bug on
+  the broken textured glb, NOT the retarget. Human clips still lunge here; orc
+  clips suit the hulking proportions.
+  - **Textured in-engine** (`_texture_golem`, maps in `models/golem_tex/`), NOT
+    baked via Blender. IMPORTANT LESSON: a Blender re-export to bake textures
+    *flattened the baked animation AND collapsed the rest skeleton* (caused a 172x
+    scale runaway). So `Golem.glb` is the clean FBX2glTF glb; textures are applied
+    per-surface in code by matching glb material-slot names.
+  - **Scaled** from the animated pose (`_scale_boss_to`, robust vs degenerate rest
+    skeletons); **grounded once** at build (`_ground_boss`) — per-frame
+    re-grounding was removed (it shook/floated during the walk cycle).
+  HP = `BOSS_MAX` 8000. Untextured for now — the 20 PBR maps from the source
+  bundle are a TODO. (Prior boss: `Pumpkin.glb`/Pumpkinhulk.)
   faces/chases the player, telegraphed ground slam (red ring wind-up → strike,
   damages player if inside), idle/windup/recover state machine; boss HP, takes
   player damage; VICTORY/DEFEATED banner; boss + player respawn.
@@ -181,11 +201,25 @@ clip, `ranged`, `dmg`/`speed` mults, placeholder `len`/`thick`/`color` mesh).
 `Main._equip_weapon()` rebuilds the held mesh + resets the combo; `_do_melee`/
 `_do_heavy` read the active weapon. Switch in-game with **Tab** (cycle) or
 **1–6**; HUD shows the name. Clips merged for weapons: Slash, SlashB, Heavy,
-Stab, Bow. Held meshes are placeholder boxes until real weapon models arrive.
+Stab, Bow. Held meshes are now the **real models** (`models/weapons/*.glb`, set via
+`weapons[].mesh`) — `_build_weapon_mesh` auto-fits them by AABB (longest axis → +Y,
+scaled to `len`, grip at hand); falls back to a placeholder box if no model. Bow
+fires a real **arrow mesh** (`arrow1.glb`, oriented along flight) and shows a draw
+pose (`BowDraw`) while aiming. Per-weapon orientation may still need small tweaks.
 Still TODO (see chat): a clickable weapon/keybind menu (needs an InputMap-action
 refactor for remapping), per-weapon mesh offset/orientation, bow draw anim,
 crouch, and distinct axe/dagger/double-sword clips. NOTE: Tab/1–6 (and R/T for
-armor/boots) now only cycle gear you **own** — see RPG windows below.
+armor/boots) now only cycle gear you **own** (currently: all owned, for testing).
+
+### Dual-wield (in progress — see `docs/DUAL_WIELD_PLAN.md`)
+Foundation is in `GameState`: weapons now carry `weight`/`str_req`/`type`/`mesh`;
+added `shields[]`, per-hand `hands = {right, left}`, and `resolve_grip(str)` (the
+stat-gated 1H/2H/dual rule). **Dormant** — combat still uses the single `weapon`
+index, so nothing's wired yet. Real weapon meshes are in `models/weapons/`
+(sword1/2, dagger, axe, bow, shield, mace, hammer, staff), props in
+`models/props/`. Remaining phases (input remap → per-hand routing → AnimationTree
+upper-body layering → weapon visuals → equip UI) need visual iteration; the plan
+doc has the step-by-step.
 
 ## RPG windows (Stats / Inventory / Skills)
 
