@@ -147,7 +147,7 @@ function drawFloor() {
 
 // Fire effects off game events (view-only). WeakSets mark rocks/arrows already
 // handled so each boulder shatter / charged-shot burst plays exactly once.
-let prevBossStateFx = null, prevBossHpFx = null, prevPlayerHpFx = null;
+let prevBossStateFx = null, prevBossHpFx = null, prevPlayerHpFx = null, prevPhaseFx = null;
 const fxSeenRocks = new WeakSet();
 const fxSeenArrows = new WeakSet();
 function updateFxTriggers(dt) {
@@ -166,6 +166,14 @@ function updateFxTriggers(dt) {
     }
   }
   prevBossStateFx = b.state;
+
+  // phase-up — the golem breaks a health segment and escalates
+  if (prevPhaseFx !== null && b.phase > prevPhaseFx) {
+    shakeT = 0.7;
+    spawnFx("runeburst", b.x, b.y - b.r, 1.8);
+    for (let k = 0; k < 5; k++) spawnFx("dust", b.x + (Math.random() * 140 - 70), b.y + b.r * 0.4, 0.9);
+  }
+  prevPhaseFx = b.phase;
 
   // dash dust trail — small puffs at the golem's feet while it charges
   if (b.attack === "dash" && b.state === "strike" && b.dash.active) {
@@ -566,7 +574,15 @@ function render() {
 
   // HUD bars
   bar(20, 20, 300, 18, p.hp / p.maxHp, "#37d35a", `HP ${Math.ceil(p.hp)}/${p.maxHp}`);
-  bar(W - 420, 20, 400, 18, b.hp / b.maxHp, "#e7544f", `BOSS ${Math.ceil(b.hp)}/${b.maxHp}`);
+  const bossW = 400, bossX = W - bossW - 20;
+  bar(bossX, 20, bossW, 18, b.hp / b.maxHp, "#e7544f", `BOSS ${Math.ceil(b.hp)}/${b.maxHp}`);
+  // phase segment dividers (the golem escalates each time a segment empties)
+  ctx.strokeStyle = "rgba(10,12,18,0.9)";
+  ctx.lineWidth = 2;
+  for (let i = 1; i < CFG.phases; i++) {
+    const x = bossX + (bossW * i) / CFG.phases;
+    ctx.beginPath(); ctx.moveTo(x, 20); ctx.lineTo(x, 38); ctx.stroke();
+  }
 
   if (TOUCH) drawControls();
   else {

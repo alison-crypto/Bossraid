@@ -59,7 +59,7 @@ test("boss slam damages a player who stays in the ring", () => {
   g.boss.slam = { x: g.player.x, y: g.player.y, active: true };
   g.player.invuln = 0;
   step(g, input(), 0.02); // windup elapses -> strike resolves
-  assert.equal(g.player.hp, 100 - 22);
+  assert.equal(g.player.hp, 100 - CFG.bossDmg);
   assert.equal(g.boss.state, "strike");
 });
 
@@ -81,24 +81,25 @@ test("stepping out of the ring avoids the slam", () => {
   assert.equal(g.player.hp, 100);
 });
 
-test("attack choice cycles all patterns; never smashes at range", () => {
+test("attack choice cycles patterns; never smashes at range", () => {
   // Re-trigger the picker repeatedly, pinning the boss so distance is stable.
-  const collect = (px, bx) => {
+  const collect = (px, bx, phase) => {
     const g = createGame();
+    g.boss.phase = phase;
     g.player.x = px; g.player.y = 300;
     const seen = new Set();
-    for (let n = 0; n < 8; n++) {
+    for (let n = 0; n < 10; n++) {
       g.boss.state = "idle"; g.boss.cd = 0; g.boss.x = bx; g.boss.y = 300;
       step(g, input(), 1 / 60);
       seen.add(g.boss.attack);
     }
     return seen;
   };
-  const far = collect(900, 100); // player well out of melee range
+  const far = collect(900, 100, 3); // phase 3 exposes the full ranged kit
   assert.ok(!far.has("smash"), "never smashes thin air at range");
   assert.ok(far.size >= 3, "varied ranged/gap-closer patterns");
 
-  const near = collect(480, 480); // boss on top of the player
+  const near = collect(480, 480, 1); // boss on top of the player
   assert.ok(near.has("smash"), "smashes when in melee reach");
 });
 
@@ -190,6 +191,28 @@ test("a thrown rock is stopped by a boulder", () => {
   g.rocks.push({ x: 360, y: 300, vx: 300, vy: 0, r: CFG.smallRockR, dmg: CFG.smallRockDmg, big: false, hit: false });
   for (let k = 0; k < 30; k++) step(g, input(), 1 / 60);
   assert.equal(g.rocks.filter((r) => !r.landed).length, 0, "scatter rock blocked by the boulder");
+});
+
+test("the golem advances a phase when a health segment is emptied", () => {
+  const g = createGame();
+  g.player.x = 480; g.player.y = 360; g.player.facing = { x: 0, y: -1 };
+  g.boss.x = 480; g.boss.y = 300; g.boss.state = "recover"; g.boss.t = 99;
+  g.boss.hp = g.boss.maxHp * (2 / 3) + 10; // one arrow drops it below the 2/3 line
+  assert.equal(g.boss.phase, 1);
+  step(g, input({ attack: true }), 1 / 60);
+  for (let k = 0; k < 60 && g.boss.phase === 1; k++) step(g, input(), 1 / 60);
+  assert.equal(g.boss.phase, 2);
+});
+
+test("the golem hits harder in later phases", () => {
+  const quakeHit = (phase) => {
+    const g = createGame();
+    g.boss.phase = phase;
+    g.boss.attack = "quake"; g.boss.state = "windup"; g.boss.t = 0.01; g.player.invuln = 0;
+    step(g, input(), 0.02);
+    return 100 - g.player.hp;
+  };
+  assert.ok(quakeHit(3) > quakeHit(1), "a phase-3 quake hurts more than phase-1");
 });
 
 test("an arrow that brings boss hp to 0 ends the game as a win", () => {

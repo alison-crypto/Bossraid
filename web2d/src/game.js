@@ -15,21 +15,21 @@ export const CFG = {
   attackCd: 0.35, heavyAttackCd: 0.7, arrowSpeed: 720, arrowR: 6,
   dodgeSpeed: 560, dodgeTime: 0.22, dodgeIframes: 0.30, hitInvuln: 0.6,
   // Boss. Every attack runs chase -> windup (telegraph) -> strike (active) ->
-  // recover, and any hit is negated while the player is invulnerable — so a
-  // well-timed dodge i-frames all five patterns. The golem is fast and
-  // relentless so a ranged archer can't trivially kite it. bossCd is the gap
-  // between attacks.
-  bossR: 40, bossSpeed: 165, bossMaxHp: 600, bossCd: 1.5, bossDef: 0,
+  // recover, and any hit is negated while the player is invulnerable. The golem
+  // has 3 health-bar segments (phases): depleting one staggers it briefly, then
+  // it gets faster, hits harder and changes its attack rotation.
+  bossR: 40, bossSpeed: 165, bossMaxHp: 1200, bossCd: 1.5, bossDef: 6,
+  phases: 3, phaseStagger: 0.85,
   // 1) smash — melee shockwave ring centered on the golem (used in close range).
-  slamR: 130, windup: 0.9, strike: 0.15, recover: 0.55, bossDmg: 22,
+  slamR: 130, windup: 0.9, strike: 0.15, recover: 0.55, bossDmg: 26,
   // 2) dash charge — lunge along a locked line; contact damage (i-frame it).
-  dashWindup: 0.55, dashSpeed: 820, dashTime: 0.3, dashRecover: 0.6, dashDmg: 26,
+  dashWindup: 0.55, dashSpeed: 820, dashTime: 0.3, dashRecover: 0.6, dashDmg: 30,
   // 3) big rock — one heavy projectile thrown at the player.
-  bigRockWindup: 0.7, bigRockSpeed: 400, bigRockR: 26, bigRockDmg: 24, rockRecover: 0.5,
+  bigRockWindup: 0.7, bigRockSpeed: 400, bigRockR: 26, bigRockDmg: 28, rockRecover: 0.5,
   // 4) scatter — 6 small rocks fired radially in all directions.
-  scatterWindup: 0.8, scatterCount: 6, smallRockSpeed: 330, smallRockR: 12, smallRockDmg: 13, scatterRecover: 0.65,
+  scatterWindup: 0.8, scatterCount: 6, smallRockSpeed: 330, smallRockR: 12, smallRockDmg: 15, scatterRecover: 0.65,
   // 5) earthquake — arena-wide; only a dodge-roll's i-frames avoid it.
-  quakeWindup: 1.1, quakeActive: 0.3, quakeRecover: 0.9, quakeDmg: 28,
+  quakeWindup: 1.1, quakeActive: 0.3, quakeRecover: 0.9, quakeDmg: 34,
 };
 
 // --- tiny vector helpers ----------------------------------------------------
@@ -66,6 +66,7 @@ export function createGame(opts = {}) {
       x: CFG.arenaW * 0.5, y: CFG.arenaH * 0.28, r: CFG.bossR,
       hp: CFG.bossMaxHp, maxHp: CFG.bossMaxHp,
       state: "idle", t: 0, cd: CFG.bossCd,
+      phase: 1, // 1..CFG.phases; rises as health-bar segments are depleted
       attack: "smash", atkCycle: 0, // which pattern is running; cycles the ranged ones
       slam: { x: 0, y: 0, active: false },
       dash: { dx: 0, dy: 0, active: false, hit: false },
@@ -134,12 +135,33 @@ export function step(s, input, dt) {
   return s;
 }
 
+// Per-phase escalation: each depleted health segment makes the golem faster,
+// hit harder, and telegraph for less time.
+const _speedMult = (b) => 1 + 0.28 * (b.phase - 1);
+const _cdMult = (b) => 1 - 0.16 * (b.phase - 1);
+const _winMult = (b) => 1 - 0.12 * (b.phase - 1);
+const _dmgMult = (b) => 1 + 0.22 * (b.phase - 1);
+
+// After the boss takes damage, bump its phase when a health segment is emptied
+// and stagger it briefly to telegraph the escalation.
+function _bossPhaseCheck(s) {
+  const b = s.boss;
+  const frac = b.hp / b.maxHp;
+  const phase = frac > 2 / 3 ? 1 : frac > 1 / 3 ? 2 : 3;
+  if (phase > b.phase && b.hp > 0) {
+    b.phase = phase;
+    b.state = "recover"; b.t = CFG.phaseStagger; b.cd = 0; // brief stagger
+    b.slam.active = false; b.dash.active = false; b.quake.active = false;
+  }
+}
+
 // Apply an incoming boss hit to the player (negated entirely by i-frames). All
-// five attack patterns funnel through here so dodge timing beats any of them.
+// five attack patterns funnel through here, scaled by the boss's phase, so dodge
+// timing beats any of them.
 function _hitPlayer(s, raw) {
   const p = s.player;
   if (p.invuln > 0) return;
-  const dmg = incomingDamage(raw, p.def);
+  const dmg = incomingDamage(Math.round(raw * _dmgMult(s.boss)), p.def);
   p.hp = Math.max(0, p.hp - dmg);
   p.lastHit = dmg;
   p.invuln = CFG.hitInvuln;
@@ -212,6 +234,7 @@ function _arrowsUpdate(s, dt) {
       b.hp = Math.max(0, b.hp - dmg);
       b.lastHit = dmg;
       if (b.hp <= 0) s.over = "won";
+      else _bossPhaseCheck(s); // depleting a segment escalates the golem
       continue; // arrow consumed on hit
     }
     // landed boulders block shots (cover for the golem)
@@ -228,7 +251,13 @@ function _arrowsUpdate(s, dt) {
 // instead (and smashes next time) — that way the ranged kit still cycles
 // regularly instead of being starved by a golem that's always closing in.
 function _chooseAttack(b, d) {
-  const seq = ["dash", "smash", "bigrock", "scatter", "quake"];
+  // Rotation shifts per phase: p1 leans melee, p3 leans fast AoE.
+  const seqs = {
+    1: ["dash", "smash", "bigrock", "smash"],
+    2: ["dash", "smash", "scatter", "bigrock", "quake"],
+    3: ["quake", "dash", "scatter", "smash", "bigrock", "dash"],
+  };
+  const seq = seqs[b.phase] || seqs[1];
   const a = seq[b.atkCycle++ % seq.length];
   return a === "smash" && d > CFG.slamR ? "dash" : a;
 }
@@ -253,6 +282,7 @@ function _bossBeginAttack(s, d) {
     case "scatter":  b.t = CFG.scatterWindup; break;
     case "quake":    b.t = CFG.quakeWindup; b.quake = { active: false }; break;
   }
+  b.t *= _winMult(b); // later phases telegraph for less time
 }
 
 // Windup -> strike: spawn projectiles / resolve instantaneous hits.
@@ -304,8 +334,9 @@ function _bossActivate(s) {
 function _bossStrikeTick(s, dt) {
   const p = s.player, b = s.boss;
   if (b.attack === "dash" && b.dash.active) {
-    b.x = clamp(b.x + b.dash.dx * CFG.dashSpeed * dt, b.r, CFG.arenaW - b.r);
-    b.y = clamp(b.y + b.dash.dy * CFG.dashSpeed * dt, b.r, CFG.arenaH - b.r);
+    const ds = CFG.dashSpeed * _speedMult(b);
+    b.x = clamp(b.x + b.dash.dx * ds * dt, b.r, CFG.arenaW - b.r);
+    b.y = clamp(b.y + b.dash.dy * ds * dt, b.r, CFG.arenaH - b.r);
     if (!b.dash.hit && dist(p, b) <= b.r + p.r) { b.dash.hit = true; _hitPlayer(s, CFG.dashDmg); }
     // a boulder stops the charge dead (b.t=0 -> recover next frame)
     if (_collideBoulders(s, b)) { b.dash.active = false; b.t = 0; }
@@ -329,9 +360,9 @@ function _bossUpdate(s, dt) {
   switch (b.state) {
     case "idle": {
       if (d > CFG.meleeRange) {
-        const u = unit(sub(p, b));
-        b.x += u.x * CFG.bossSpeed * dt;
-        b.y += u.y * CFG.bossSpeed * dt;
+        const u = unit(sub(p, b)), sp = CFG.bossSpeed * _speedMult(b);
+        b.x += u.x * sp * dt;
+        b.y += u.y * sp * dt;
         _collideBoulders(s, b); // can't walk through its own boulders
       }
       b.cd -= dt;
@@ -355,7 +386,7 @@ function _bossUpdate(s, dt) {
     }
     case "recover": {
       b.t -= dt;
-      if (b.t <= 0) { b.state = "idle"; b.cd = CFG.bossCd; }
+      if (b.t <= 0) { b.state = "idle"; b.cd = CFG.bossCd * _cdMult(b); }
       break;
     }
   }
