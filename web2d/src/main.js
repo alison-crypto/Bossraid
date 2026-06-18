@@ -15,14 +15,33 @@ const ctx = canvas.getContext("2d");
 // BACKING store is sized to the display's real pixels (high-DPI) so the upscaled
 // texture stays crisp instead of being a blurry 960x600 buffer stretched up.
 const W = CFG.arenaW, H = CFG.arenaH;
+
+// Display settings (size mode + render quality), persisted.
+const DPR_CAP = { auto: () => Math.min(window.devicePixelRatio || 1, 2), "1": () => 1, "2": () => 2 };
+function loadSettings() {
+  try { return { display: "fit", dpr: "auto", ...JSON.parse(localStorage.getItem("bossraid.settings") || "{}") }; }
+  catch (_) { return { display: "fit", dpr: "auto" }; }
+}
+let settings = loadSettings();
+function saveSettings() { try { localStorage.setItem("bossraid.settings", JSON.stringify(settings)); } catch (_) { /* no storage */ } }
+
+// Size the canvas ELEMENT per the chosen display mode (the #wrap flex centers it).
+function applyDisplay() {
+  const s = canvas.style;
+  if (settings.display === "stretch") { s.width = "100vw"; s.height = "100vh"; }
+  else if (settings.display === "fit") { s.width = "min(100vw, calc(100vh * 1.6))"; s.height = "min(100vh, calc(100vw / 1.6))"; }
+  else { const px = { s960: 960, s1280: 1280, s1600: 1600 }[settings.display] || 960; s.width = px + "px"; s.height = Math.round(px / 1.6) + "px"; }
+  resizeCanvas();
+}
+// Size the BACKING store to real device pixels (per the quality cap) so it stays crisp.
 function resizeCanvas() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2); // cap to keep the buffer sane
+  const dpr = (DPR_CAP[settings.dpr] || DPR_CAP.auto)();
   const cssW = canvas.clientWidth || W, cssH = canvas.clientHeight || H;
   canvas.width = Math.max(1, Math.round(cssW * dpr));
   canvas.height = Math.max(1, Math.round(cssH * dpr));
   ctx.imageSmoothingQuality = "high";
 }
-resizeCanvas();
+applyDisplay();
 addEventListener("resize", resizeCanvas);
 document.addEventListener("fullscreenchange", resizeCanvas);
 document.addEventListener("webkitfullscreenchange", resizeCanvas);
@@ -473,8 +492,24 @@ function renderMenu() {
   beginScreen();
   label(ctx, "BOSSRAID", W / 2, 175, { size: 66, bold: true, color: "#eef3ff" });
   label(ctx, "2 D", W / 2, 212, { size: 22, color: "#9fb3d6" });
-  uiButton(ctx, "play", "PLAY", W / 2 - 110, 285, 220, 58, { accent: "#345b86" });
-  label(ctx, TOUCH ? "tap PLAY to begin" : "click PLAY (or press Enter)", W / 2, 400, { size: 14, color: "#7e8aa3" });
+  uiButton(ctx, "play", "PLAY", W / 2 - 110, 275, 220, 58, { accent: "#345b86" });
+  uiButton(ctx, "settings", "Settings", W / 2 - 90, 348, 180, 46);
+  label(ctx, TOUCH ? "tap PLAY to begin" : "click PLAY (or press Enter)", W / 2, 430, { size: 14, color: "#7e8aa3" });
+}
+
+function renderSettings() {
+  beginScreen();
+  label(ctx, "SETTINGS", W / 2, 90, { size: 34, bold: true, color: "#eef3ff" });
+  label(ctx, "Display size", W / 2, 160, { size: 18, color: "#cfe0ff" });
+  const disp = [["fit", "Fit"], ["stretch", "Stretch"], ["s960", "960"], ["s1280", "1280"], ["s1600", "1600"]];
+  const dw = 130, dg = 10, dtot = disp.length * dw + (disp.length - 1) * dg, dx0 = (W - dtot) / 2;
+  disp.forEach(([id, lbl], i) => uiButton(ctx, "disp_" + id, lbl, dx0 + i * (dw + dg), 180, dw, 46, { active: settings.display === id }));
+  label(ctx, "Render quality", W / 2, 280, { size: 18, color: "#cfe0ff" });
+  const q = [["auto", "Auto"], ["1", "1×"], ["2", "2×"]];
+  const qw = 150, qg = 12, qtot = q.length * qw + (q.length - 1) * qg, qx0 = (W - qtot) / 2;
+  q.forEach(([id, lbl], i) => uiButton(ctx, "dpr_" + id, lbl, qx0 + i * (qw + qg), 300, qw, 46, { active: settings.dpr === id }));
+  label(ctx, "Fit keeps the aspect (bands on wide screens); Stretch fills edge-to-edge.", W / 2, 380, { size: 13, color: "#93a1bd" });
+  uiButton(ctx, "backMenu", "◀ Back", 28, H - 66, 120, 44);
 }
 
 function renderCharSelect() {
@@ -501,6 +536,7 @@ function renderScene() {
   if (scene === "menu") renderMenu();
   else if (scene === "charSelect") renderCharSelect();
   else if (scene === "bossSelect") renderBossSelect();
+  else if (scene === "settings") renderSettings();
 }
 
 // --- pause menu + RPG panels ------------------------------------------------
@@ -600,7 +636,14 @@ function handleUiClick(x, y) {
     else if (id === "menu") scene = "menu";
     return;
   }
+  if (scene === "settings") {
+    if (id === "backMenu") scene = "menu";
+    else if (id.startsWith("disp_")) { settings.display = id.slice(5); saveSettings(); applyDisplay(); }
+    else if (id.startsWith("dpr_")) { settings.dpr = id.slice(4); saveSettings(); applyDisplay(); }
+    return;
+  }
   if (scene === "menu" && id === "play") scene = "charSelect";
+  else if (scene === "menu" && id === "settings") scene = "settings";
   else if (scene === "charSelect") {
     if (id.startsWith("char_")) selectedChar = id.slice(5);
     else if (id === "toBoss") scene = "bossSelect";
