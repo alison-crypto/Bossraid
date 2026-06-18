@@ -20,11 +20,15 @@ runs). This covers both the **golem** boss and the **archer** player.
 ## Files the code expects (name · frames · fps)
 | File | Frames | FPS | Loop |
 |------|-------:|----:|------|
-| `golem_idle.png`  | 6  | 8  | yes |
-| `golem_walk.png`  | 8  | 10 | yes |
-| `golem_slam.png`  | 10 | 14 | no  |
-| `golem_hit.png`   | 4  | 16 | no  |
-| `golem_death.png` | 6  | 9  | no  |
+| `golem_idle.png`    | 6 | 8  | yes |
+| `golem_walk.png`    | 8 | 10 | yes |
+| `golem_smash.png`   | 8 | 8  | no  |
+| `golem_dash.png`    | 6 | 7  | no  |
+| `golem_bigrock.png` | 6 | 7  | no  |
+| `golem_scatter.png` | 6 | 7  | no  |
+| `golem_quake.png`   | 8 | 6  | no  |
+| `golem_hit.png`     | 4 | 16 | no  |
+| `golem_death.png`   | 6 | 9  | no  |
 | `archer_idle.png`  | 6 | 8  | yes |
 | `archer_walk.png`  | 8 | 11 | yes |
 | `archer_shoot.png` | 6 | 16 | no  |

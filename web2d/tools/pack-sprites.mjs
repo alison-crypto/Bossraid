@@ -30,11 +30,15 @@ const CHARACTERS = [
   {
     prefix: "golem",
     jobs: [
-      { name: "idle",  frames: 6,  rows: 1 },
-      { name: "walk",  frames: 8,  rows: 1 },
-      { name: "slam",  frames: 10, rows: 2 },
-      { name: "hit",   frames: 4,  rows: 1 },
-      { name: "death", frames: 6,  rows: 1 },
+      { name: "idle",    frames: 6, rows: 1 },
+      { name: "walk",    frames: 8, rows: 1 },
+      { name: "smash",   frames: 8, rows: 1 },
+      { name: "dash",    frames: 6, rows: 1 },
+      { name: "bigrock", frames: 6, rows: 1 },
+      { name: "scatter", frames: 6, rows: 1, even: true },
+      { name: "quake",   frames: 8, rows: 1 },
+      { name: "hit",     frames: 4, rows: 1 },
+      { name: "death",   frames: 6, rows: 1 },
     ],
   },
   {
@@ -93,13 +97,16 @@ function bbox(png, x0, y0, x1, y1) {
 // the frame separators (this bridges internal gaps like the space between the
 // legs). If content is fused across the row (e.g. slam debris spanning frames)
 // we can't find enough gaps, so fall back to an even split.
-function rowFrameBounds(png, y0, y1, cols) {
+function rowFrameBounds(png, y0, y1, cols, even = false) {
   const { width, data } = png;
   const evenSplit = () => {
     const cw = width / cols, out = [];
     for (let c = 0; c < cols; c++) out.push([Math.round(c * cw), Math.round((c + 1) * cw) - 1]);
     return out;
   };
+  // Some sheets (e.g. flung-rock debris) bridge the gaps between frames and fool
+  // gap detection, so allow forcing the plain even grid.
+  if (even) return evenSplit();
   const has = new Array(width).fill(false);
   for (let x = 0; x < width; x++) {
     for (let y = y0; y < y1; y++) {
@@ -177,7 +184,7 @@ function packOne(prefix, job) {
   const frames = [];
   for (let r = 0; r < job.rows; r++) {
     const y0 = Math.round(r * cellH), y1 = Math.round((r + 1) * cellH);
-    for (const [x0, x1] of rowFrameBounds(src, y0, y1, cols)) {
+    for (const [x0, x1] of rowFrameBounds(src, y0, y1, cols, job.even)) {
       const bb = bbox(src, x0, y0, x1 + 1, y1) || { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 };
       frames.push(bb);
     }
