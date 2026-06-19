@@ -45,8 +45,9 @@ test("firing respects cooldown (one arrow per press window)", () => {
 
 test("an arrow that misses leaves the arena and is culled", () => {
   const g = createGame();
-  g.player.x = 480; g.player.y = 300; g.player.facing = { x: 1, y: 0 }; // shoot right, past the boss
-  g.boss.x = 480; g.boss.y = 200; g.boss.state = "recover"; g.boss.t = 99;
+  // fire from near the right edge so the shot leaves the (large) arena quickly
+  g.player.x = CFG.arenaW - 40; g.player.y = 300; g.player.facing = { x: 1, y: 0 };
+  g.boss.x = 100; g.boss.y = 100; g.boss.state = "recover"; g.boss.t = 99; // out of the way
   step(g, input({ attack: true }), 1 / 60);
   for (let k = 0; k < 120 && g.arrows.length > 0; k++) step(g, input(), 1 / 60);
   assert.equal(g.arrows.length, 0, "arrow culled off-arena");

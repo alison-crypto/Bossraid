@@ -24,7 +24,9 @@ export function deriveCombat(opts = {}) {
 }
 
 export const CFG = {
-  arenaW: 1280, arenaH: 800,
+  // Large arena (~3× the old field) for roaming; the view camera follows the
+  // player and stays zoomed in, so you only ever see a window of it at a time.
+  arenaW: 3840, arenaH: 2400,
   // Player (archer): shoots arrows in the facing direction. Light = quick shot,
   // heavy = a slower, stronger charged shot. meleeRange is kept as the boss's
   // chase-stop distance, not a player reach.
@@ -82,7 +84,7 @@ export function createGame(opts = {}) {
     t: 0,
     over: null, // null | "won" | "lost"
     player: {
-      x: CFG.arenaW * 0.5, y: CFG.arenaH * 0.72, r: CFG.playerR,
+      x: CFG.arenaW * 0.5, y: CFG.arenaH * 0.5 + 260, r: CFG.playerR,
       str: c.str, dex: c.dex, con: c.con, def: c.def, weaponDmg: c.weaponDmg, bowDmg: c.bowDmg,
       speed: c.speed, dodgeIframes: c.dodgeIframes, heavyBaseMult: c.heavyBaseMult, rangedVBonus: c.rangedVBonus,
       hp, maxHp: hp,
@@ -93,7 +95,7 @@ export function createGame(opts = {}) {
       lastHit: 0,
     },
     boss: {
-      x: CFG.arenaW * 0.5, y: CFG.arenaH * 0.28, r: CFG.bossR,
+      x: CFG.arenaW * 0.5, y: CFG.arenaH * 0.5 - 260, r: CFG.bossR,
       hp: CFG.bossMaxHp, maxHp: CFG.bossMaxHp,
       state: "idle", t: 0, cd: CFG.bossCd,
       phase: 1, // 1..CFG.phases; rises as health-bar segments are depleted
