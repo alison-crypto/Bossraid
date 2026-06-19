@@ -107,7 +107,22 @@ pan+zoom around the camera (perspective in 2.5D, flat in 2D); textured stone flo
 that scrolls/recedes under the camera (scanline-sampled in 2.5D, world-tiled in
 2D); depth-sorted billboards (far→near); bloom/glow pass + emissive golem aura &
 minion eyes; off-screen GOLEM direction chevron. Combatants now spawn near each
-other so the fight starts engaged on the big map.
+other so the fight starts engaged on the big map. · #75 ability kit + unified
+input. Every character now has a slot kit: **3 attacks** (Quick/Power/Spread),
+**3 skills** (Volley/Explosive/Pierce, cooldown-gated via `player.cd`), a
+**passive** (Eagle-Eye: distance-scaled arrow damage), a **dash**, a **defence**
+(class-typed — light = Deflect reflects rocks back; heavy classes will block+parry),
+and a **special** (Arrow Storm, gated by BOTH a meter that fills in combat AND a
+cooldown). `step()` input contract expanded (attack1-3/skill1-3/dash/defend/
+special/aim) with legacy `attack/heavy/dodge` aliases kept so tests pass. Unified
+`readInput()` merges **keyboard + Xbox gamepad (Gamepad API) + on-screen touch**
+with edge-triggering; gamepad also drives menus. HUD adds a special-meter bar,
+per-skill cooldown sweeps on the touch buttons, and a keyboard/controller ability
+readout. 68 unit tests (7 new for the kit).
+  - **Xbox map:** LS move · RS aim · RT Quick · RB Power · LB Spread · X Volley ·
+    Y Explosive · B Pierce · LT Deflect · A Dash · Dpad-Up/R3 Special · Start pause.
+  - **Keyboard:** WASD · J/K/L attacks · U/I/O skills · Space dash · Shift deflect ·
+    E special · Esc/P pause.
 
 ## Backlog / next ideas
 - **Unlock** Knight/Mage characters + Cinder Wyrm boss (currently `locked:true` in

@@ -61,6 +61,22 @@ export const CFG = {
   // deals contact damage; arrows kill them (no DEF). New big rocks landing in
   // phase 3 stand up as minions instead of resting as boulders.
   minionR: 16, minionHp: 40, minionSpeed: 130, minionDmg: 14, minionTouchCd: 0.8,
+
+  // ===== Ability kit (Archer; data-driven so other classes slot in) =========
+  // 3rd attack — Spread Shot: a fan of arrows.
+  spreadCount: 3, spreadArc: 0.5, staSpread: 14,
+  // Passive — Eagle Eye: arrows gain up to +eagleMax damage the farther they
+  // have flown (rewards kiting on the big arena).
+  eagleRange: 900, eagleMax: 0.6,
+  // 3 skills (seconds of cooldown + their params).
+  cdVolley: 6, volleyCount: 5, volleyArc: 0.10,
+  cdExplosive: 9, explosiveR: 170, explosiveDmg: 70,
+  cdPierce: 8, pierceMult: 2.6,
+  // Defence — light-class "Deflect": a brief i-frame window that bounces the
+  // golem's rocks back as damaging projectiles. (Heavy classes block+parry.)
+  cdDeflect: 5, deflectTime: 0.4, deflectR: 230, reflectSpeed: 780, reflectDmg: 36,
+  // Special — Arrow Storm: gated by BOTH a meter (fills in combat) AND a CD.
+  cdSpecial: 16, specialGainHit: 0.05, specialGainTaken: 0.08, stormCount: 20,
 };
 
 // --- tiny vector helpers ----------------------------------------------------
@@ -74,7 +90,14 @@ function unit(v) {
 }
 
 export function emptyInput() {
-  return { move: { x: 0, y: 0 }, attack: false, heavy: false, dodge: false };
+  return {
+    move: { x: 0, y: 0 }, aim: null,
+    attack1: false, attack2: false, attack3: false,
+    skill1: false, skill2: false, skill3: false,
+    dash: false, defend: false, special: false,
+    // legacy aliases (older callers/tests): attack=attack1, heavy=attack2, dodge=dash
+    attack: false, heavy: false, dodge: false,
+  };
 }
 
 export function createGame(opts = {}) {
@@ -93,6 +116,10 @@ export function createGame(opts = {}) {
       invuln: 0, attackCd: 0,
       dodge: { t: 0, dir: { x: 0, y: 0 } },
       lastHit: 0,
+      // ability state: per-skill cooldowns, the special meter (0..1) and the
+      // active deflect window.
+      cd: { volley: 0, explosive: 0, pierce: 0, deflect: 0, special: 0 },
+      special: 0, deflectT: 0,
     },
     boss: {
       x: CFG.arenaW * 0.5, y: CFG.arenaH * 0.5 - 260, r: CFG.bossR,
@@ -123,9 +150,17 @@ export function step(s, input, dt) {
   p.invuln = Math.max(0, p.invuln - dt);
   p.attackCd = Math.max(0, p.attackCd - dt);
   p.staRegenT = Math.max(0, p.staRegenT - dt);
+  p.deflectT = Math.max(0, p.deflectT - dt);
+  for (const k in p.cd) p.cd[k] = Math.max(0, p.cd[k] - dt);
+
+  // Logical actions (new names) with backward-compatible aliases.
+  const a1 = i.attack1 || i.attack, a2 = i.attack2 || i.heavy, a3 = i.attack3;
+  const wantDash = i.dash || i.dodge;
+  const aiming = i.aim && (i.aim.x || i.aim.y);
+  if (aiming) p.facing = unit(i.aim); // controller right-stick aim
 
   // Dodge start (dash with i-frames) — costs stamina, gated when too low.
-  if (i.dodge && p.dodge.t <= 0 && p.stamina >= CFG.staDodge) {
+  if (wantDash && p.dodge.t <= 0 && p.stamina >= CFG.staDodge) {
     const d = (i.move.x || i.move.y) ? unit(i.move) : p.facing;
     p.dodge.t = CFG.dodgeTime;
     p.dodge.dir = d;
@@ -143,7 +178,7 @@ export function step(s, input, dt) {
   } else {
     const m = unit(i.move);
     if (m.x || m.y) {
-      p.facing = m;
+      if (!aiming) p.facing = m; // movement steers facing unless the stick aims
       moving = true;
       p.stamina -= CFG.staMove * dt; // tiny trickle; does NOT pause regen
     }
@@ -153,26 +188,52 @@ export function step(s, input, dt) {
   p.x = clamp(p.x + vx * dt, p.r, CFG.arenaW - p.r);
   p.y = clamp(p.y + vy * dt, p.r, CFG.arenaH - p.r);
 
-  // Attack — fire an arrow in the facing direction. Heavy = a stronger, slower
-  // charged shot; light = a quick shot. Can't fire mid-dodge.
-  if ((i.attack || i.heavy) && p.attackCd <= 0 && p.dodge.t <= 0) {
-    const heavy = !!i.heavy; // heavy wins if both are held
-    const cost = heavy ? CFG.staHeavy : CFG.staShoot;
-    if (p.stamina >= cost) { // gated when too low
-      const dir = unit(p.facing);
-      // Ranged kinetic-energy impact (CombatMath); the charged shot scales it by
-      // the STR-stepped heavy multiplier.
-      const base = arrowImpactDamage(p.str, p.dex, p.bowDmg, p.rangedVBonus);
-      const dmg = heavy ? Math.round(base * heavyMultiplier(p.str, p.heavyBaseMult)) : base;
-      s.arrows.push({
-        x: p.x + dir.x * p.r, y: p.y + dir.y * p.r,
-        vx: dir.x * CFG.arrowSpeed, vy: dir.y * CFG.arrowSpeed,
-        dmg, heavy,
-      });
-      p.attackCd = heavy ? CFG.heavyAttackCd : CFG.attackCd;
-      p.stamina -= cost;
-      p.staRegenT = CFG.staRegenDelay;
+  // ===== Abilities =========================================================
+  const fa = Math.atan2(p.facing.y, p.facing.x); // facing angle
+
+  // 3 attacks (stamina-gated; share the attack cooldown so one fires at a time).
+  // Priority when several are held: power > spread > quick.
+  if (p.attackCd <= 0 && p.dodge.t <= 0) {
+    if (a2 && p.stamina >= CFG.staHeavy) { // Power Shot (charged)
+      _spawnArrow(s, fa, { mult: heavyMultiplier(p.str, p.heavyBaseMult), heavy: true });
+      p.attackCd = CFG.heavyAttackCd; p.stamina -= CFG.staHeavy; p.staRegenT = CFG.staRegenDelay;
+    } else if (a3 && p.stamina >= CFG.staSpread) { // Spread Shot (fan)
+      const n = CFG.spreadCount, stepA = CFG.spreadArc / Math.max(1, n - 1);
+      for (let k = 0; k < n; k++) _spawnArrow(s, fa + (k - (n - 1) / 2) * stepA, {});
+      p.attackCd = CFG.heavyAttackCd * 0.8; p.stamina -= CFG.staSpread; p.staRegenT = CFG.staRegenDelay;
+    } else if (a1 && p.stamina >= CFG.staShoot) { // Quick Shot
+      _spawnArrow(s, fa, {});
+      p.attackCd = CFG.attackCd; p.stamina -= CFG.staShoot; p.staRegenT = CFG.staRegenDelay;
     }
+  }
+
+  // 3 skills (cooldown-gated; the caller edge-triggers these).
+  if (i.skill1 && p.cd.volley <= 0) { // Volley — a forward burst of arrows
+    const n = CFG.volleyCount;
+    for (let k = 0; k < n; k++) _spawnArrow(s, fa + (k - (n - 1) / 2) * CFG.volleyArc, { mult: 0.7 });
+    p.cd.volley = CFG.cdVolley;
+  }
+  if (i.skill2 && p.cd.explosive <= 0) { // Explosive Arrow — AoE on impact
+    _spawnArrow(s, fa, { explosive: true, mult: 0.8, speed: CFG.arrowSpeed * 0.9 });
+    p.cd.explosive = CFG.cdExplosive;
+  }
+  if (i.skill3 && p.cd.pierce <= 0) { // Piercing Bolt — rips minions, big boss hit
+    _spawnArrow(s, fa, { pierce: true, mult: CFG.pierceMult, speed: CFG.arrowSpeed * 1.3 });
+    p.cd.pierce = CFG.cdPierce;
+  }
+
+  // Defence (Deflect): brief i-frames; bounces nearby rocks back at the golem.
+  if (i.defend && p.cd.deflect <= 0) {
+    p.deflectT = CFG.deflectTime;
+    p.invuln = Math.max(p.invuln, CFG.deflectTime);
+    p.cd.deflect = CFG.cdDeflect;
+  }
+
+  // Special — Arrow Storm. Needs a FULL meter AND the cooldown ready.
+  if (i.special && p.special >= 1 && p.cd.special <= 0) {
+    const n = CFG.stormCount, arc = Math.PI * 0.9;
+    for (let k = 0; k < n; k++) _spawnArrow(s, fa + (k / Math.max(1, n - 1) - 0.5) * arc, { mult: 0.9 });
+    p.special = 0; p.cd.special = CFG.cdSpecial;
   }
 
   // Stamina regen — fast while idle, slow while walking (after the post-action pause).
@@ -229,6 +290,46 @@ function _explodeAt(s, x, y) {
   if (dist(s.player, { x, y }) <= CFG.rockExplodeR + s.player.r) _hitPlayer(s, CFG.rockExplodeDmg);
 }
 
+// Spawn one player arrow from the archer toward angle `ang`. opts: mult (damage
+// ×), heavy, explosive, pierce, speed. Records spawn point for the Eagle-Eye
+// passive (distance-scaled damage, applied at impact).
+function _spawnArrow(s, ang, opts = {}) {
+  const p = s.player;
+  const dir = { x: Math.cos(ang), y: Math.sin(ang) };
+  if (Math.abs(dir.x) < 1e-9) dir.x = 0; // snap axis-aligned shots (avoid fp dust)
+  if (Math.abs(dir.y) < 1e-9) dir.y = 0;
+  const base = arrowImpactDamage(p.str, p.dex, p.bowDmg, p.rangedVBonus);
+  const speed = opts.speed || CFG.arrowSpeed;
+  s.arrows.push({
+    x: p.x + dir.x * p.r, y: p.y + dir.y * p.r, sx: p.x, sy: p.y,
+    vx: dir.x * speed, vy: dir.y * speed,
+    dmg: Math.round(base * (opts.mult || 1)),
+    heavy: !!opts.heavy, explosive: !!opts.explosive, pierce: !!opts.pierce,
+  });
+}
+
+// Apply player damage to the golem: DEF subtracts, the special meter ticks up,
+// phase escalation + win are resolved. Single path for arrows, explosions and
+// reflected rocks.
+function _damageBoss(s, raw) {
+  const b = s.boss;
+  if (b.hp <= 0) return;
+  const dmg = incomingDamage(raw, CFG.bossDef);
+  b.hp = Math.max(0, b.hp - dmg);
+  b.lastHit = dmg;
+  s.player.special = Math.min(1, s.player.special + CFG.specialGainHit);
+  if (b.hp <= 0) s.over = "won"; else _bossPhaseCheck(s);
+}
+
+// An explosive arrow detonating: AoE that damages the golem and any minions
+// (player-friendly boom — flagged so the view can tint it differently).
+function _explodeFriendly(s, x, y) {
+  s.booms.push({ x, y, r: CFG.explosiveR, t: CFG.boomTime, maxT: CFG.boomTime, friendly: true });
+  if (s.boss.hp > 0 && dist(s.boss, { x, y }) <= CFG.explosiveR + s.boss.r) _damageBoss(s, CFG.explosiveDmg);
+  for (const m of s.minions) if (dist(m, { x, y }) <= CFG.explosiveR + m.r) m.hp -= CFG.explosiveDmg;
+  s.minions = s.minions.filter((m) => m.hp > 0);
+}
+
 // Advance the tiny golems: chase the player, deal contact damage on a cooldown.
 function _minionsUpdate(s, dt) {
   const p = s.player;
@@ -257,6 +358,7 @@ function _hitPlayer(s, raw) {
   p.hp = Math.max(0, p.hp - dmg);
   p.lastHit = dmg;
   p.invuln = CFG.hitInvuln;
+  p.special = Math.min(1, p.special + CFG.specialGainTaken); // taking hits builds the special
   if (p.hp <= 0) s.over = "lost";
 }
 
@@ -291,6 +393,21 @@ function _rocksUpdate(s, dt) {
 
     rk.x += rk.vx * dt;
     rk.y += rk.vy * dt;
+
+    // Reflected (player-deflected) rocks fly at the golem and damage IT.
+    if (rk.reflected) {
+      if (s.boss.hp > 0 && dist(rk, s.boss) <= rk.r + s.boss.r) { _damageBoss(s, rk.dmg); continue; }
+      const mm = 40;
+      if (rk.x < -mm || rk.x > CFG.arenaW + mm || rk.y < -mm || rk.y > CFG.arenaH + mm) continue;
+      kept.push(rk); continue;
+    }
+    // Deflect window: an incoming rock near the archer is bounced back at the boss.
+    if (p.deflectT > 0 && dist(rk, p) <= CFG.deflectR) {
+      const u = unit(sub(s.boss, p));
+      rk.vx = u.x * CFG.reflectSpeed; rk.vy = u.y * CFG.reflectSpeed;
+      rk.reflected = true; rk.dmg = CFG.reflectDmg; rk.hit = false; rk.big = false;
+      kept.push(rk); continue;
+    }
     if (!rk.hit && dist(rk, p) <= rk.r + p.r) { rk.hit = true; _hitPlayer(s, rk.dmg); }
 
     // a flying rock meets an existing boulder: the big rock lands against it; a
@@ -326,22 +443,27 @@ function _arrowsUpdate(s, dt) {
   for (const a of s.arrows) {
     a.x += a.vx * dt;
     a.y += a.vy * dt;
-    // tiny golems are squishy (no DEF) and die fast; an arrow is consumed on hit
+    // Eagle-Eye passive: arrows hit harder the farther they have flown.
+    const travel = Math.hypot(a.x - a.sx, a.y - a.sy);
+    const eagle = 1 + Math.min(CFG.eagleMax, (travel / CFG.eagleRange) * CFG.eagleMax);
+    const dealt = Math.round(a.dmg * eagle);
+    // tiny golems are squishy (no DEF). Piercing bolts rip through them.
     let hitMinion = false;
     for (const m of s.minions) {
-      if (m.hp > 0 && dist(a, m) <= m.r + CFG.arrowR) { m.hp -= a.dmg; hitMinion = true; break; }
+      if (m.hp > 0 && dist(a, m) <= m.r + CFG.arrowR) { m.hp -= dealt; hitMinion = true; if (!a.pierce) break; }
     }
-    if (hitMinion) { s.minions = s.minions.filter((m) => m.hp > 0); continue; }
+    if (s.minions.some((m) => m.hp <= 0)) s.minions = s.minions.filter((m) => m.hp > 0);
+    if (hitMinion && !a.pierce) { if (a.explosive) _explodeFriendly(s, a.x, a.y); continue; }
     if (b.hp > 0 && dist(a, b) <= b.r + CFG.arrowR) {
-      const dmg = incomingDamage(a.dmg, CFG.bossDef); // golem DEF subtracts
-      b.hp = Math.max(0, b.hp - dmg);
-      b.lastHit = dmg;
-      if (b.hp <= 0) s.over = "won";
-      else _bossPhaseCheck(s); // depleting a segment escalates the golem
-      continue; // arrow consumed on hit
+      _damageBoss(s, dealt); // DEF, special meter, phase + win handled inside
+      if (a.explosive) _explodeFriendly(s, a.x, a.y);
+      continue; // arrow consumed on the boss (even piercing — there's one golem)
     }
     // landed boulders block shots (cover for the golem)
-    if (s.rocks.some((rk) => rk.landed && dist(a, rk) <= rk.r + CFG.arrowR)) continue;
+    if (s.rocks.some((rk) => rk.landed && dist(a, rk) <= rk.r + CFG.arrowR)) {
+      if (a.explosive) _explodeFriendly(s, a.x, a.y);
+      continue;
+    }
     const m = 24;
     if (a.x < -m || a.x > CFG.arenaW + m || a.y < -m || a.y > CFG.arenaH + m) continue;
     kept.push(a);

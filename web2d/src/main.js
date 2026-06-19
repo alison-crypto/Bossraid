@@ -144,11 +144,24 @@ if (fsBtn) {
 
 // --- on-screen controls (canvas coords) ------------------------------------
 const STICK = { hintX: 120, hintY: H - 120, R: 78, knobR: 36 };
+// On-screen controls emulating a gamepad: a right-hand cluster (3 attacks + dash
+// + defence) and a centre-bottom row of skills + the special. `cd` names the
+// game.player.cd field so the button can render its cooldown sweep.
 const BTN = [
-  { role: "attack", label: "⚔", cx: W - 100, cy: H - 100, r: 50, color: "#3aa0ff" },
-  { role: "heavy",  label: "⚡", cx: W - 210, cy: H - 150, r: 36, color: "#c8893f" },
-  { role: "dodge",  label: "»", cx: W - 112, cy: H - 218, r: 36, color: "#5ad1a0" },
+  // attack cluster + dash + defence (right-hand thumb arc)
+  { role: "attack1", label: "⚔", cx: W - 90,  cy: H - 95,  r: 46, color: "#3aa0ff" },
+  { role: "attack2", label: "⚡", cx: W - 188, cy: H - 140, r: 33, color: "#c8893f" },
+  { role: "attack3", label: "⋔", cx: W - 120, cy: H - 196, r: 30, color: "#49c0a0" },
+  { role: "dash",    label: "»", cx: W - 238, cy: H - 92,  r: 28, color: "#5ad1a0" },
+  { role: "defend",  label: "⛊", cx: W - 286, cy: H - 152, r: 28, color: "#6fb6ff", cd: "deflect" },
+  // skills + special (far-right vertical strip — clear of the movement zone)
+  { role: "special", label: "★", cx: W - 48, cy: H - 332, r: 30, color: "#ffc24a", cd: "special", meter: true },
+  { role: "skill1",  label: "1", cx: W - 48, cy: H - 262, r: 25, color: "#7a86ff", cd: "volley" },
+  { role: "skill2",  label: "2", cx: W - 48, cy: H - 205, r: 25, color: "#7a86ff", cd: "explosive" },
+  { role: "skill3",  label: "3", cx: W - 48, cy: H - 148, r: 25, color: "#7a86ff", cd: "pierce" },
 ];
+// Cooldown ceilings for the on-screen sweep + HUD readouts.
+const CD_MAX = { volley: CFG.cdVolley, explosive: CFG.cdExplosive, pierce: CFG.cdPierce, deflect: CFG.cdDeflect, special: CFG.cdSpecial };
 
 const stick = { active: false, id: null, base: { x: 0, y: 0 }, cur: { x: 0, y: 0 } };
 const pointers = new Map(); // pointerId -> { role }
@@ -580,28 +593,96 @@ addEventListener("keydown", (e) => {
 });
 addEventListener("keyup", (e) => keys.delete(e.code));
 
+// First connected gamepad, if any (re-fetched each poll — required by Chrome).
+function activeGamepad() {
+  if (!navigator.getGamepads) return null;
+  for (const g of navigator.getGamepads()) if (g && g.connected) return g;
+  return null;
+}
+const DZ = 0.25; // analog stick dead-zone
+
+let prevHeld = {}; // for edge-triggering skills/dash/defend/special/pause
 function readInput() {
   const i = emptyInput();
-  // keyboard
-  if (keys.has("KeyW") || keys.has("ArrowUp")) i.move.y -= 1;
-  if (keys.has("KeyS") || keys.has("ArrowDown")) i.move.y += 1;
-  if (keys.has("KeyA") || keys.has("ArrowLeft")) i.move.x -= 1;
-  if (keys.has("KeyD") || keys.has("ArrowRight")) i.move.x += 1;
-  if (keys.has("KeyJ")) i.attack = true;
-  if (keys.has("KeyL")) i.heavy = true;
-  if (keys.has("Space")) i.dodge = true;
-  // touch stick (overrides move when engaged)
+  const held = {};
+  let mx = 0, my = 0, aimx = 0, aimy = 0;
+
+  // ----- keyboard -----------------------------------------------------------
+  if (keys.has("KeyW") || keys.has("ArrowUp")) my -= 1;
+  if (keys.has("KeyS") || keys.has("ArrowDown")) my += 1;
+  if (keys.has("KeyA") || keys.has("ArrowLeft")) mx -= 1;
+  if (keys.has("KeyD") || keys.has("ArrowRight")) mx += 1;
+  held.attack1 = keys.has("KeyJ");
+  held.attack2 = keys.has("KeyK");
+  held.attack3 = keys.has("KeyL");
+  held.skill1 = keys.has("KeyU");
+  held.skill2 = keys.has("KeyI");
+  held.skill3 = keys.has("KeyO");
+  held.dash = keys.has("Space");
+  held.defend = keys.has("ShiftLeft") || keys.has("ShiftRight");
+  held.special = keys.has("KeyE") || keys.has("KeyQ");
+
+  // ----- touch (joystick + on-screen buttons) -------------------------------
   if (stick.active) {
     const v = stickVector(stick.base, stick.cur, STICK.R, 0.18);
-    if (v.x || v.y) { i.move.x = v.x; i.move.y = v.y; }
+    if (v.x || v.y) { mx = v.x; my = v.y; }
   }
-  // touch buttons
-  for (const rec of pointers.values()) {
-    if (rec.role === "attack") i.attack = true;
-    else if (rec.role === "heavy") i.heavy = true;
-    else if (rec.role === "dodge") i.dodge = true;
+  for (const rec of pointers.values()) if (rec.role && rec.role !== "stick") held[rec.role] = true;
+
+  // ----- Xbox / standard gamepad --------------------------------------------
+  const gp = activeGamepad();
+  if (gp) {
+    const ax = gp.axes, B = gp.buttons;
+    const on = (n) => B[n] && B[n].pressed, val = (n) => (B[n] ? B[n].value : 0);
+    if (Math.abs(ax[0]) > DZ) mx += ax[0];
+    if (Math.abs(ax[1]) > DZ) my += ax[1];
+    if (ax.length >= 4) { if (Math.abs(ax[2]) > DZ) aimx += ax[2]; if (Math.abs(ax[3]) > DZ) aimy += ax[3]; }
+    // standard map: 0 A,1 B,2 X,3 Y,4 LB,5 RB,6 LT,7 RT,9 Start,11 R3,12-15 dpad
+    held.dash    = held.dash    || on(0);            // A
+    held.skill3  = held.skill3  || on(1);            // B
+    held.skill1  = held.skill1  || on(2);            // X
+    held.skill2  = held.skill2  || on(3);            // Y
+    held.attack3 = held.attack3 || on(4);            // LB — spread
+    held.attack2 = held.attack2 || on(5);            // RB — power
+    held.defend  = held.defend  || val(6) > 0.4;     // LT — deflect
+    held.attack1 = held.attack1 || val(7) > 0.4;     // RT — quick (primary)
+    held.special = held.special || on(12) || on(11); // Dpad-Up / R3
+    if (on(14)) mx -= 1; if (on(15)) mx += 1; if (on(13)) my += 1; // dpad move
+    held.pause = on(9);                              // Start
   }
+
+  // ----- assemble -----------------------------------------------------------
+  i.move.x = Math.max(-1, Math.min(1, mx));
+  i.move.y = Math.max(-1, Math.min(1, my));
+  if (aimx || aimy) i.aim = { x: aimx, y: aimy };
+  i.attack1 = !!held.attack1; i.attack2 = !!held.attack2; i.attack3 = !!held.attack3; // held
+  const edge = (k) => !!held[k] && !prevHeld[k];     // press-once actions
+  i.skill1 = edge("skill1"); i.skill2 = edge("skill2"); i.skill3 = edge("skill3");
+  i.dash = edge("dash"); i.defend = edge("defend"); i.special = edge("special");
+  if (edge("pause")) { if (scene === "playing" && !game.over) scene = "paused"; else if (scene === "paused") scene = "playing"; }
+  prevHeld = held;
   return i;
+}
+
+// Gamepad navigation for the menus (A/Start = confirm, B = back). Polled each
+// frame while not in a fight so the whole game is controller-playable.
+let padMenuPrev = {};
+function gamepadMenu() {
+  const gp = activeGamepad();
+  if (!gp) return;
+  const on = (n) => gp.buttons[n] && gp.buttons[n].pressed;
+  const edge = (n) => on(n) && !padMenuPrev[n];
+  const confirm = edge(0) || edge(9), back = edge(1);
+  if (confirm) {
+    if (scene === "menu") scene = "charSelect";
+    else if (scene === "charSelect") scene = "bossSelect";
+    else if (scene === "bossSelect") startFight();
+    else if (scene === "settings") scene = "menu";
+  } else if (back) {
+    if (scene === "charSelect" || scene === "settings") scene = "menu";
+    else if (scene === "bossSelect") scene = "charSelect";
+  }
+  padMenuPrev = { 0: on(0), 1: on(1), 9: on(9) };
 }
 
 const pressed = (role) => {
@@ -824,7 +905,8 @@ function frame(now) {
   if (scene === "playing") {
     if (game.over) {
       grantReward();
-      if (keys.has("KeyR")) startFight();
+      const gp = activeGamepad();
+      if (keys.has("KeyR") || (gp && (gp.buttons[0]?.pressed || gp.buttons[9]?.pressed))) startFight();
     } else {
       step(game, readInput(), dt);
     }
@@ -835,6 +917,7 @@ function frame(now) {
   } else if (scene === "paused") {
     renderPause();
   } else {
+    gamepadMenu(); // controller can drive the menus too
     renderScene();
   }
   requestAnimationFrame(frame);
@@ -1112,10 +1195,11 @@ function render() {
 
   // HUD bars
   bar(20, 20, 300, 18, p.hp / p.maxHp, "#37d35a", `HP ${Math.ceil(p.hp)}/${p.maxHp}`);
-  bar(20, 42, 220, 11, p.stamina / p.staminaMax, "#e6c84f", ""); // stamina
+  bar(20, 42, 220, 10, p.stamina / p.staminaMax, "#e6c84f", ""); // stamina
+  bar(20, 56, 220, 8, p.special, p.special >= 1 ? "#ffe08a" : "#b98bff", ""); // special meter
   // level + xp readout
-  label(ctx, `LVL ${profile.level}`, 20, 74, { size: 13, align: "left", color: "#cfe0ff", bold: true });
-  bar(78, 64, 162, 9, profile.xp / rpg.xpToNext(profile.level), "#7aa2ff", "");
+  label(ctx, `LVL ${profile.level}`, 20, 88, { size: 13, align: "left", color: "#cfe0ff", bold: true });
+  bar(78, 78, 162, 9, profile.xp / rpg.xpToNext(profile.level), "#7aa2ff", "");
   const bossW = 400, bossX = W - bossW - 20;
   bar(bossX, 20, bossW, 18, b.hp / b.maxHp, "#e7544f", `BOSS ${Math.ceil(b.hp)}/${b.maxHp}`);
   // phase segment dividers (the golem escalates each time a segment empties)
@@ -1134,10 +1218,11 @@ function render() {
 
   if (TOUCH) drawControls();
   else {
+    drawAbilityHud();
     ctx.fillStyle = "#9aa3b5";
-    ctx.font = "14px system-ui, sans-serif";
+    ctx.font = "13px system-ui, sans-serif";
     ctx.textAlign = "left";
-    ctx.fillText("WASD move · J shoot · L power shot · Space dodge", 20, H - 16);
+    ctx.fillText("Move WASD · Quick J · Power K · Spread L · Dash Space · Skills U/I/O · Deflect Shift · Special E   ·   🎮 Xbox supported", 20, H - 14);
   }
 
   if (game.over) {
@@ -1167,13 +1252,29 @@ function drawControls() {
   circle(base.x + off.x, base.y + off.y, STICK.knobR, true, false);
   ctx.globalAlpha = 1;
 
-  // buttons
+  // buttons (with cooldown sweep + special-meter ring)
+  const pl = game.player;
   for (const btn of BTN) {
     const on = pressed(btn.role);
-    ctx.globalAlpha = on ? 0.95 : 0.55;
+    ctx.globalAlpha = on ? 0.95 : 0.5;
     ctx.fillStyle = btn.color;
     circle(btn.cx, btn.cy, btn.r, true, false);
     ctx.globalAlpha = 1;
+    if (btn.cd) { // dark wedge that shrinks as the ability recharges
+      const rem = pl.cd[btn.cd] || 0, max = CD_MAX[btn.cd] || 1;
+      if (rem > 0) {
+        ctx.fillStyle = "rgba(8,10,16,0.6)";
+        ctx.beginPath(); ctx.moveTo(btn.cx, btn.cy);
+        ctx.arc(btn.cx, btn.cy, btn.r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (rem / max));
+        ctx.closePath(); ctx.fill();
+      }
+    }
+    if (btn.meter) { // special charge ring
+      const m = pl.special || 0;
+      ctx.strokeStyle = m >= 1 ? "#ffe08a" : "rgba(255,194,74,0.85)";
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(btn.cx, btn.cy, btn.r + 5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * m); ctx.stroke();
+    }
     ctx.fillStyle = "#0b0e14";
     ctx.font = `bold ${Math.round(btn.r * 0.8)}px system-ui, sans-serif`;
     ctx.textAlign = "center";
@@ -1181,6 +1282,30 @@ function drawControls() {
     ctx.fillText(btn.label, btn.cx, btn.cy + 2);
     ctx.textBaseline = "alphabetic";
   }
+}
+
+// Compact ability readout for keyboard/controller play (cooldowns + special).
+function drawAbilityHud() {
+  const p = game.player;
+  const items = [
+    { k: "U", n: "Volley", cd: "volley" },
+    { k: "I", n: "Explosive", cd: "explosive" },
+    { k: "O", n: "Pierce", cd: "pierce" },
+    { k: "Shift", n: "Deflect", cd: "deflect" },
+    { k: "E", n: "Arrow Storm", cd: "special", meter: true },
+  ];
+  const w = 112, h = 34, gap = 8, total = items.length * (w + gap) - gap, x0 = (W - total) / 2, y = H - 46;
+  items.forEach((it, idx) => {
+    const x = x0 + idx * (w + gap), rem = p.cd[it.cd] || 0, max = CD_MAX[it.cd] || 1;
+    ctx.fillStyle = "rgba(14,18,28,0.72)"; roundRect(ctx, x, y, w, h, 7); ctx.fill();
+    if (rem > 0) { ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(x, y, w * (rem / max), h); }
+    if (it.meter) { ctx.fillStyle = p.special >= 1 ? "rgba(255,224,138,0.4)" : "rgba(185,139,255,0.3)"; ctx.fillRect(x, y + h - 5, w * p.special, 5); }
+    const ready = rem <= 0 && (!it.meter || p.special >= 1);
+    ctx.fillStyle = ready ? "#eaf0ff" : "#9fb0cc"; ctx.font = "bold 12px system-ui, sans-serif"; ctx.textAlign = "left";
+    ctx.fillText(it.n, x + 8, y + 15);
+    ctx.fillStyle = "#8aa0c8"; ctx.font = "10px system-ui, sans-serif";
+    ctx.fillText(`[${it.k}]${rem > 0 ? "  " + rem.toFixed(1) + "s" : ""}`, x + 8, y + 28);
+  });
 }
 
 function circle(x, y, r, fill, stroke) {

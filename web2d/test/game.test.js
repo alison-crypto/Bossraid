@@ -31,7 +31,8 @@ test("an arrow that reaches the boss deals its kinetic-energy impact (minus DEF)
   const before = g.boss.hp;
   step(g, input({ attack: true }), 1 / 60); // fire
   for (let k = 0; k < 60 && g.boss.hp === before; k++) step(g, input(), 1 / 60);
-  assert.equal(before - g.boss.hp, expected);
+  // ≥ expected: the Eagle-Eye passive adds distance-scaled damage on top.
+  assert.ok(before - g.boss.hp >= expected, "at least the base impact (minus DEF)");
 });
 
 test("firing respects cooldown (one arrow per press window)", () => {
@@ -343,6 +344,82 @@ test("explosion markers decay and clear", () => {
   g.booms.push({ x: 100, y: 100, r: 50, t: 0.1, maxT: 0.1 });
   for (let k = 0; k < 20; k++) step(g, input(), 1 / 60);
   assert.equal(g.booms.length, 0, "boom cleared after its lifetime");
+});
+
+// --- ability kit (3 attacks / 3 skills / dash / defence / special) -----------
+
+test("attack3 (spread shot) fires a fan of arrows", () => {
+  const g = createGame();
+  g.player.facing = { x: 0, y: -1 };
+  step(g, input({ attack3: true }), 1 / 60);
+  assert.equal(g.arrows.length, CFG.spreadCount);
+});
+
+test("skill1 (volley) fires a burst, then is cooldown-gated", () => {
+  const g = createGame();
+  g.player.facing = { x: 0, y: -1 };
+  step(g, input({ skill1: true }), 1 / 60);
+  assert.equal(g.arrows.length, CFG.volleyCount);
+  assert.ok(g.player.cd.volley > 0, "volley on cooldown");
+  const n = g.arrows.length;
+  step(g, input({ skill1: true }), 1 / 60); // still cooling down
+  assert.equal(g.arrows.length, n, "no second volley while on cooldown");
+});
+
+test("skill2 (explosive arrow) detonates and AoE-damages the boss", () => {
+  const g = createGame();
+  g.player.x = 500; g.player.y = 500; g.player.facing = { x: 0, y: -1 };
+  g.boss.x = 500; g.boss.y = 460; g.boss.state = "recover"; g.boss.t = 99;
+  const before = g.boss.hp;
+  step(g, input({ skill2: true }), 1 / 60);
+  for (let k = 0; k < 30 && g.boss.hp === before; k++) step(g, input(), 1 / 60);
+  assert.ok(g.boss.hp < before, "explosive arrow hurt the boss");
+  assert.ok(g.booms.some((bm) => bm.friendly), "a friendly boom was created");
+});
+
+test("skill3 (piercing bolt) rips through multiple minions", () => {
+  const g = createGame();
+  g.player.x = 500; g.player.y = 500; g.player.facing = { x: 0, y: -1 };
+  g.boss.x = 50; g.boss.y = 50; g.boss.state = "recover"; g.boss.t = 99; // out of the line
+  g.minions.push({ x: 500, y: 440, r: CFG.minionR, hp: 5, touchCd: 99 });
+  g.minions.push({ x: 500, y: 380, r: CFG.minionR, hp: 5, touchCd: 99 });
+  step(g, input({ skill3: true }), 1 / 60);
+  for (let k = 0; k < 30 && g.minions.length > 0; k++) step(g, input(), 1 / 60);
+  assert.equal(g.minions.length, 0, "pierce killed both minions");
+});
+
+test("defence (deflect) bounces a rock back at the golem", () => {
+  const g = createGame();
+  g.player.x = 500; g.player.y = 500; g.player.invuln = 0;
+  g.boss.x = 500; g.boss.y = 200; g.boss.state = "recover"; g.boss.t = 99;
+  g.rocks.push({ x: 500, y: 540, vx: 0, vy: -100, r: CFG.smallRockR, dmg: CFG.smallRockDmg, big: false, hit: false });
+  const before = g.boss.hp;
+  step(g, input({ defend: true }), 1 / 60);
+  assert.ok(g.rocks[0] && g.rocks[0].reflected, "rock reflected");
+  for (let k = 0; k < 60 && g.boss.hp === before; k++) step(g, input(), 1 / 60);
+  assert.ok(g.boss.hp < before, "reflected rock damaged the golem");
+});
+
+test("special needs a full meter AND cooldown, then fires Arrow Storm", () => {
+  const g = createGame();
+  g.player.facing = { x: 0, y: -1 };
+  step(g, input({ special: true }), 1 / 60); // meter empty
+  assert.equal(g.arrows.length, 0, "no special without a full meter");
+  g.player.special = 1; g.player.cd.special = 0;
+  step(g, input({ special: true }), 1 / 60);
+  assert.equal(g.arrows.length, CFG.stormCount, "arrow storm unleashed");
+  assert.equal(g.player.special, 0, "meter consumed");
+  assert.ok(g.player.cd.special > 0, "special on cooldown");
+});
+
+test("dealing damage builds the special meter", () => {
+  const g = createGame();
+  g.player.x = 500; g.player.y = 500; g.player.facing = { x: 0, y: -1 };
+  g.boss.x = 500; g.boss.y = 200; g.boss.state = "recover"; g.boss.t = 99;
+  assert.equal(g.player.special, 0);
+  step(g, input({ attack: true }), 1 / 60);
+  for (let k = 0; k < 60 && g.player.special === 0; k++) step(g, input(), 1 / 60);
+  assert.ok(g.player.special > 0, "meter rose after hitting the boss");
 });
 
 test("the game freezes once it is over", () => {
