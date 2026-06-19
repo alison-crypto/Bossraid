@@ -600,7 +600,7 @@ function drawPauseTab(x, y, w) {
         const can = owned && rpg.canEquip(p, it);
         uiButton(ctx, "equip_" + slot + "_" + it.id, it.name.replace(/^.*? /, ""), bx, ry - 6, 170, 40,
           { active: on, enabled: can, font: 13, accent: owned ? "#2a3346" : "#1b2030" });
-        if (!owned) label(ctx, "locked", bx + 85, ry + 30, { size: 11, color: "#5a6478" });
+        if (!owned) label(ctx, `Lv ${it.lvl}`, bx + 85, ry + 30, { size: 11, color: "#5a6478" });
         else if (!rpg.canEquip(p, it)) label(ctx, `STR ${it.strReq}`, bx + 85, ry + 30, { size: 11, color: "#c98" });
       });
       ry += 70;

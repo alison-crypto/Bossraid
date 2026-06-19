@@ -93,7 +93,8 @@ layer · #57 telegraphs/whole-map quake/floor/rock sprites · #59 floor+rock art
 boulders block boss, dash FX · #60 fill-screen canvas · #61 hi-DPI crisp render ·
 #62 adopt CombatMath · #63 3-phase golem · #64 stamina · #65 menu+select · #66 RPG
 core (equip/skills/XP) · #67 pause + RPG panels · #68 display options · #69 stamina
-retune.
+retune · #71 gear unlocks by level (owns by level, equips by STR; inventory shows
+the unlock level).
 
 ## Backlog / next ideas
 - **Unlock** Knight/Mage characters + Cinder Wyrm boss (currently `locked:true` in
