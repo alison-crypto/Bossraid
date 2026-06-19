@@ -14,7 +14,8 @@ const ctx = canvas.getContext("2d");
 // World/logical size — all gameplay + drawing use these coords. The canvas
 // BACKING store is sized to the display's real pixels (high-DPI) so the upscaled
 // texture stays crisp instead of being a blurry 960x600 buffer stretched up.
-const W = CFG.arenaW, H = CFG.arenaH;
+const W = 1280, H = 800; // logical VIEWPORT (fixed 1.6 aspect). The WORLD is
+// CFG.arenaW × CFG.arenaH (much larger) and is shown through a follow-camera.
 
 // Display settings (size mode + render quality), persisted.
 const DPR_CAP = { auto: () => Math.min(window.devicePixelRatio || 1, 2), "1": () => 1, "2": () => 2 };
@@ -206,9 +207,33 @@ let dashDustT = 0; // throttles the dash dust trail
 // arena always has a ground, even before art is dropped in.
 const floorImg = new Image();
 let floorOk = false;
-floorImg.onload = () => { floorOk = floorImg.naturalWidth > 0; };
+floorImg.onload = () => { floorOk = floorImg.naturalWidth > 0; floorTexReady = false; };
 floorImg.onerror = () => { floorOk = false; };
 floorImg.src = "./assets/arena_floor.png";
+
+// Offscreen buffers: a top-down floor "map" (sampled per depth row to texture
+// the 2.5D perspective floor) and a half-res buffer for the bloom/glow pass.
+const floorTex = document.createElement("canvas");
+let floorTexReady = false;
+const FLOOR_TILE = 512; // a square, tileable stone cell sampled by world coords
+function buildFloorTex() {
+  floorTex.width = FLOOR_TILE; floorTex.height = FLOOR_TILE;
+  const fc = floorTex.getContext("2d");
+  if (floorOk) {
+    const tw = floorImg.naturalWidth, th = floorImg.naturalHeight;
+    for (let y = 0; y < FLOOR_TILE; y += th) for (let x = 0; x < FLOOR_TILE; x += tw) fc.drawImage(floorImg, x, y);
+  } else {
+    fc.fillStyle = "#15140f"; fc.fillRect(0, 0, FLOOR_TILE, FLOOR_TILE);
+    const T = 84;
+    for (let ty = 0; ty < FLOOR_TILE; ty += T) for (let tx = 0; tx < FLOOR_TILE; tx += T) {
+      const n = (((tx * 73856093) ^ (ty * 19349663)) >>> 0) % 12;
+      fc.fillStyle = `rgb(${26 + n},${24 + n},${19 + n})`;
+      fc.fillRect(tx + 1, ty + 1, T - 2, T - 2);
+    }
+  }
+  floorTexReady = true;
+}
+const glowBuf = document.createElement("canvas"); // bloom source (half-res)
 
 function drawFloor() {
   if (floorOk) {
@@ -249,7 +274,7 @@ function updateFxTriggers(dt) {
       shakeT = 0.55;
       spawnFx("quakecrack", b.x, b.y + b.r * 0.4, 1.5);
       for (let k = 0; k < 6; k++) {
-        spawnFx("quakecrack", 110 + Math.random() * (W - 220), 110 + Math.random() * (H - 220), 0.7 + Math.random() * 0.7);
+        spawnFx("quakecrack", p.x + (Math.random() - 0.5) * 1100, p.y + (Math.random() - 0.5) * 750, 0.7 + Math.random() * 0.7);
       }
     }
   }
@@ -314,12 +339,29 @@ function drawEffects() {
 // far edge) and entities are drawn as upright billboards standing on their
 // projected ground point, each with a flattened drop-shadow. In 2D mode every
 // helper below is the identity, so the SAME draw code renders both views.
-const VIEW = { horizon: 150, farS: 0.72, nearS: 1.14, flat: 0.45 };
+// Follow-camera: locked on the player, zoomed in close. `camX/camY` is the world
+// point shown at the screen's eye-point each frame. The world is far bigger than
+// the viewport, so only a window around the archer is ever visible.
+const VIEW = { eyeY: 0.62, tiltY: 0.86, persp: 0.00060, sMin: 0.5, sMax: 1.8, flat: 0.42 };
+const CAM = { zoom2d: 1.9, zoom25: 1.62 };
+let camX = 0, camY = 0;
+function camUpdate() { camX = game.player.x; camY = game.player.y; }
 function is25d() { return settings.view === "2.5d"; }
-function vDepth(wy) { return Math.max(0, Math.min(1, wy / H)); }
-function vScale(wy) { return is25d() ? VIEW.farS + (VIEW.nearS - VIEW.farS) * vDepth(wy) : 1; }
-function vX(wx, wy) { return is25d() ? W / 2 + (wx - W / 2) * vScale(wy) : wx; }
-function vY(wy) { return is25d() ? VIEW.horizon + (H - VIEW.horizon) * vDepth(wy) : wy; }
+// In 2.5D, things ahead (smaller wy) scale down and X converges; in 2D it's a
+// flat pan+zoom. Both keep the player centred at the eye-point.
+function vScale(wy) {
+  if (!is25d()) return CAM.zoom2d;
+  const cy = (wy - camY) * CAM.zoom25;
+  return CAM.zoom25 * Math.max(VIEW.sMin, Math.min(VIEW.sMax, 1 + cy * VIEW.persp));
+}
+function vX(wx, wy) {
+  if (!is25d()) return (wx - camX) * CAM.zoom2d + W / 2;
+  return W / 2 + (wx - camX) * vScale(wy);
+}
+function vY(wy) {
+  if (!is25d()) return (wy - camY) * CAM.zoom2d + H * VIEW.eyeY;
+  return H * VIEW.eyeY + (wy - camY) * CAM.zoom25 * VIEW.tiltY;
+}
 // A grounded shadow ellipse under a world point (wy = the entity's feet).
 function groundShadow(wx, wy, r, alpha = 0.4) {
   const s = vScale(wy);
@@ -345,19 +387,50 @@ function groundDecal(wx, wy, draw) {
   ctx.restore();
 }
 
-// Tilted perspective floor for the 2.5D view: a dark back wall above the horizon
-// and a receding stone plane with a converging grid below it.
+// Camera-following tilted floor (2.5D): the real stone texture, sampled per
+// screen scanline by inverse-projecting to a world row and tiling it across at
+// that row's scale. It pans with the camera (sampling is by world coords) and
+// recedes with distance, so moving the archer scrolls the ground convincingly.
 function drawFloor25d() {
-  let g = ctx.createLinearGradient(0, -24, 0, VIEW.horizon + 30);
-  g.addColorStop(0, "#070910"); g.addColorStop(1, "#13120d");
-  ctx.fillStyle = g; ctx.fillRect(-24, -24, W + 48, VIEW.horizon + 56);
-  g = ctx.createLinearGradient(0, VIEW.horizon, 0, H + 48);
-  g.addColorStop(0, "#181610"); g.addColorStop(1, "#26221b");
-  ctx.fillStyle = g; ctx.fillRect(-24, VIEW.horizon, W + 48, H - VIEW.horizon + 72);
-  ctx.strokeStyle = "rgba(125,114,92,0.14)"; ctx.lineWidth = 1;
-  for (let i = 1; i <= 14; i++) { const wy = (i / 14) * H; ctx.beginPath(); ctx.moveTo(vX(0, wy), vY(wy)); ctx.lineTo(vX(W, wy), vY(wy)); ctx.stroke(); }
-  for (let i = 0; i <= 12; i++) { const wx = (i / 12) * W; ctx.beginPath(); ctx.moveTo(vX(wx, 0), vY(0)); ctx.lineTo(vX(wx, H), vY(H)); ctx.stroke(); }
-  const vg = ctx.createRadialGradient(W / 2, H * 0.62, H * 0.2, W / 2, H * 0.62, H * 0.95);
+  if (!floorTexReady) buildFloorTex();
+  const T = FLOOR_TILE, band = 8;
+  ctx.fillStyle = "#0a0b10"; ctx.fillRect(-24, -24, W + 48, H + 48);
+  for (let sy = -band; sy < H + band; sy += band) {
+    // inverse vY: which world row sits at this screen band
+    const wy = camY + (sy + band / 2 - H * VIEW.eyeY) / (CAM.zoom25 * VIEW.tiltY);
+    const scale = vScale(wy);
+    const srcY = ((wy % T) + T) % T;
+    const srcH = Math.max(1, band / (CAM.zoom25 * VIEW.tiltY));
+    const destW = T * scale;
+    const worldLeft = camX + (0 - W / 2) / scale;
+    let wx = Math.floor(worldLeft / T) * T;
+    for (let guard = 0; guard < 24; guard++, wx += T) {
+      const dx = vX(wx, wy);
+      if (dx > W) break;
+      ctx.drawImage(floorTex, 0, srcY, T, srcH, dx, sy, destW + 1, band + 1);
+    }
+  }
+  // distance shading (top = farther/darker) + vignette
+  let g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, "rgba(5,6,11,0.8)"); g.addColorStop(0.45, "rgba(5,6,11,0)");
+  ctx.fillStyle = g; ctx.fillRect(-24, -24, W + 48, H + 48);
+  const vg = ctx.createRadialGradient(W / 2, H * 0.58, H * 0.22, W / 2, H * 0.58, H * 0.95);
+  vg.addColorStop(0, "rgba(0,0,0,0)"); vg.addColorStop(1, "rgba(0,0,0,0.5)");
+  ctx.fillStyle = vg; ctx.fillRect(-24, -24, W + 48, H + 48);
+}
+
+// Camera-following flat floor (in-game 2D view): tile the stone texture in world
+// space, projected by the linear pan+zoom so it scrolls under the player.
+function drawFloorWorld2d() {
+  if (!floorTexReady) buildFloorTex();
+  const T = FLOOR_TILE, z = CAM.zoom2d, tw = T * z;
+  ctx.fillStyle = "#0e0d0a"; ctx.fillRect(-24, -24, W + 48, H + 48);
+  const wx0 = Math.floor((camX - (W / 2) / z) / T) * T;
+  const wy0 = Math.floor((camY - (H * VIEW.eyeY) / z) / T) * T;
+  for (let wy = wy0; vY(wy) < H + tw; wy += T)
+    for (let wx = wx0; vX(wx, wy) < W + tw; wx += T)
+      ctx.drawImage(floorTex, vX(wx, wy), vY(wy), tw + 1, tw + 1);
+  const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.25, W / 2, H / 2, H * 0.9);
   vg.addColorStop(0, "rgba(0,0,0,0)"); vg.addColorStop(1, "rgba(0,0,0,0.5)");
   ctx.fillStyle = vg; ctx.fillRect(-24, -24, W + 48, H + 48);
 }
@@ -771,8 +844,9 @@ requestAnimationFrame(frame);
 // --- render -----------------------------------------------------------------
 function render() {
   const p = game.player, b = game.boss;
+  camUpdate(); // lock the camera onto the archer before projecting anything
 
-  // Map the 960x600 world onto the full-resolution backing store (high-DPI).
+  // Map the logical viewport onto the full-resolution backing store (high-DPI).
   ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
 
   // Screen-shake offset (earthquake). Wrap the whole playfield so the floor,
@@ -783,7 +857,7 @@ function render() {
   ctx.save();
   ctx.translate(ox, oy);
 
-  if (is25d()) drawFloor25d(); else drawFloor();
+  if (is25d()) drawFloor25d(); else drawFloorWorld2d();
 
   // smash danger zone — a ground decal AROUND the golem (the ring IS the hitbox).
   // windup: gradient pool + a shrinking inner ring counting down to impact.
@@ -868,66 +942,7 @@ function render() {
     ctx.restore();
   }
 
-  // boss — animated sprite if its art is loaded, else the placeholder circle
-  groundShadow(b.x, b.y + b.r, b.r * 1.1, 0.45);
-  const clip = GOLEM[bossAnim.clip];
-  const idx = clip ? frameIndex(bossAnim.t, clip.fps, clip.frames, clip.loop) : 0;
-  const drewBoss = clip ? billboard(clip, idx, b.x, b.y + b.r, BOSS_DISPLAY_H, p.x < b.x) : false;
-  if (!drewBoss) {
-    const s = vScale(b.y);
-    ctx.fillStyle = { idle: "#6f7787", windup: "#c2553f", strike: "#ff9c44", recover: "#555b69" }[b.state];
-    circle(vX(b.x, b.y), vY(b.y), b.r * s, true, false);
-    ctx.fillStyle = "#0c0e14";
-    ctx.font = "bold 20px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText("GOLEM", vX(b.x, b.y), vY(b.y) + 6);
-  }
-
-  // boss rocks as real stone: boulder (frame 0) for the big rock + landed
-  // obstacle, a stable small-rock variant (frames 1–3) for scatter pellets.
-  for (const rk of game.rocks) {
-    const s = vScale(rk.y);
-    if (rk.landed) groundShadow(rk.x, rk.y + rk.r * 0.75, rk.r * 1.05, 0.4);
-    let frame = 0;
-    if (!rk.big && !rk.landed) {
-      let v = rockVariant.get(rk);
-      if (!v) { v = 1 + Math.floor(Math.random() * 3); rockVariant.set(rk, v); }
-      frame = v;
-    }
-    const size = rk.r * (rk.landed ? 3.2 : rk.big ? 2.9 : 2.7);
-    const drew = ROCKS.ok && billboard(ROCKS, frame, rk.x, rk.y + size / 2, size, false);
-    if (!drew) {
-      ctx.fillStyle = rk.landed ? "#6b5c47" : rk.big ? "#7c6b54" : "#8a8170";
-      ctx.strokeStyle = "rgba(20,16,12,0.7)";
-      ctx.lineWidth = rk.landed ? 4 : 3;
-      circle(vX(rk.x, rk.y), vY(rk.y), rk.r * s, true, true);
-    }
-  }
-
-  // tiny golems (phase 3): little stone bodies that bob as they chase, with
-  // glowing eyes turned toward the player and a thin health pip.
-  for (const m of game.minions) {
-    groundShadow(m.x, m.y + m.r * 0.8, m.r * 0.96, 0.4);
-    const s = vScale(m.y + m.r);
-    const bob = Math.sin(game.t * 9 + m.x * 0.05) * 2 * s;
-    const gx = vX(m.x, m.y + m.r), feetY = vY(m.y + m.r) + bob;
-    const drew = ROCKS.ok && drawStrip(ctx, ROCKS, 0, gx, feetY, m.r * 2.4 * s, false);
-    if (!drew) {
-      ctx.fillStyle = "#5b5142"; ctx.strokeStyle = "rgba(15,12,9,0.8)"; ctx.lineWidth = 3;
-      circle(gx, feetY - m.r * 1.2 * s, m.r * s, true, true);
-    }
-    // eyes toward the player (at the body's center)
-    const cy = feetY - m.r * 1.2 * s;
-    const ang = Math.atan2(p.y - m.y, p.x - m.x), ex = Math.cos(ang) * 4 * s, ey = Math.sin(ang) * 4 * s;
-    ctx.fillStyle = "#ff7a3a";
-    for (const sx of [-5, 5]) { ctx.beginPath(); ctx.arc(gx + sx * s + ex, cy + ey, 2.2 * s, 0, Math.PI * 2); ctx.fill(); }
-    // health pip above the head
-    const hpW = m.r * 1.6 * s, frac = Math.max(0, m.hp / CFG.minionHp), pipY = feetY - m.r * 2.4 * s - 6 * s;
-    ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(gx - hpW / 2, pipY, hpW, 3 * s);
-    ctx.fillStyle = "#ff5a5a"; ctx.fillRect(gx - hpW / 2, pipY, hpW * frac, 3 * s);
-  }
-
-  // pellet detonations — an expanding, fading shock ring
+  // pellet detonations — an expanding, fading shock ring (ground layer)
   for (const bm of game.booms) {
     const k = 1 - bm.t / bm.maxT; // 0 -> 1 over its lifetime
     groundDecal(bm.x, bm.y, (s) => {
@@ -940,7 +955,104 @@ function render() {
     });
   }
 
-  // arrows in flight (drawn under the characters)
+  // ---- depth-sorted billboards (far → near) so nearer things overlap ----
+  const bills = [];
+
+  // boss — animated sprite if its art is loaded, else the placeholder circle
+  bills.push({ y: b.y + b.r, draw: () => {
+    groundShadow(b.x, b.y + b.r, b.r * 1.1, 0.45);
+    if (is25d()) { // emissive ground glow (lighting)
+      const s = vScale(b.y), R = b.r * 2.4 * s;
+      ctx.save(); ctx.globalCompositeOperation = "lighter";
+      const gw = ctx.createRadialGradient(vX(b.x, b.y), vY(b.y), 4, vX(b.x, b.y), vY(b.y), R);
+      gw.addColorStop(0, "rgba(95,160,220,0.16)"); gw.addColorStop(1, "rgba(95,160,220,0)");
+      ctx.fillStyle = gw; ctx.beginPath(); ctx.arc(vX(b.x, b.y), vY(b.y), R, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+    const clip = GOLEM[bossAnim.clip];
+    const idx = clip ? frameIndex(bossAnim.t, clip.fps, clip.frames, clip.loop) : 0;
+    const drewBoss = clip ? billboard(clip, idx, b.x, b.y + b.r, BOSS_DISPLAY_H, p.x < b.x) : false;
+    if (!drewBoss) {
+      const s = vScale(b.y);
+      ctx.fillStyle = { idle: "#6f7787", windup: "#c2553f", strike: "#ff9c44", recover: "#555b69" }[b.state];
+      circle(vX(b.x, b.y), vY(b.y), b.r * s, true, false);
+      ctx.fillStyle = "#0c0e14"; ctx.font = "bold 20px system-ui, sans-serif"; ctx.textAlign = "center";
+      ctx.fillText("GOLEM", vX(b.x, b.y), vY(b.y) + 6);
+    }
+  } });
+
+  // boss rocks: boulder (frame 0) for big rocks + landed obstacles, a stable
+  // small-rock variant (frames 1–3) for scatter pellets.
+  for (const rk of game.rocks) {
+    const size = rk.r * (rk.landed ? 3.2 : rk.big ? 2.9 : 2.7);
+    bills.push({ y: rk.y + (rk.landed ? rk.r : 0), draw: () => {
+      const s = vScale(rk.y);
+      if (rk.landed) groundShadow(rk.x, rk.y + rk.r * 0.75, rk.r * 1.05, 0.4);
+      let frame = 0;
+      if (!rk.big && !rk.landed) {
+        let v = rockVariant.get(rk);
+        if (!v) { v = 1 + Math.floor(Math.random() * 3); rockVariant.set(rk, v); }
+        frame = v;
+      }
+      const drew = ROCKS.ok && billboard(ROCKS, frame, rk.x, rk.y + size / 2, size, false);
+      if (!drew) {
+        ctx.fillStyle = rk.landed ? "#6b5c47" : rk.big ? "#7c6b54" : "#8a8170";
+        ctx.strokeStyle = "rgba(20,16,12,0.7)"; ctx.lineWidth = rk.landed ? 4 : 3;
+        circle(vX(rk.x, rk.y), vY(rk.y), rk.r * s, true, true);
+      }
+    } });
+  }
+
+  // tiny golems (phase 3): little stone bodies that bob as they chase, with
+  // glowing eyes turned toward the player and a thin health pip.
+  for (const m of game.minions) {
+    bills.push({ y: m.y + m.r, draw: () => {
+      groundShadow(m.x, m.y + m.r * 0.8, m.r * 0.96, 0.4);
+      const s = vScale(m.y + m.r);
+      const bob = Math.sin(game.t * 9 + m.x * 0.05) * 2 * s;
+      const gx = vX(m.x, m.y + m.r), feetY = vY(m.y + m.r) + bob;
+      const drew = ROCKS.ok && drawStrip(ctx, ROCKS, 0, gx, feetY, m.r * 2.4 * s, false);
+      if (!drew) {
+        ctx.fillStyle = "#5b5142"; ctx.strokeStyle = "rgba(15,12,9,0.8)"; ctx.lineWidth = 3;
+        circle(gx, feetY - m.r * 1.2 * s, m.r * s, true, true);
+      }
+      const cy = feetY - m.r * 1.2 * s; // eyes at the body's centre, glowing
+      const ang = Math.atan2(p.y - m.y, p.x - m.x), ex = Math.cos(ang) * 4 * s, ey = Math.sin(ang) * 4 * s;
+      if (is25d()) { ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.fillStyle = "rgba(255,120,60,0.5)";
+        ctx.beginPath(); ctx.arc(gx + ex, cy + ey, 7 * s, 0, Math.PI * 2); ctx.fill(); ctx.restore(); }
+      ctx.fillStyle = "#ff7a3a";
+      for (const sx of [-5, 5]) { ctx.beginPath(); ctx.arc(gx + sx * s + ex, cy + ey, 2.2 * s, 0, Math.PI * 2); ctx.fill(); }
+      const hpW = m.r * 1.6 * s, frac = Math.max(0, m.hp / CFG.minionHp), pipY = feetY - m.r * 2.4 * s - 6 * s;
+      ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(gx - hpW / 2, pipY, hpW, 3 * s);
+      ctx.fillStyle = "#ff5a5a"; ctx.fillRect(gx - hpW / 2, pipY, hpW * frac, 3 * s);
+    } });
+  }
+
+  // player (archer) — animated sprite if loaded, else the placeholder circle
+  bills.push({ y: p.y + p.r, draw: () => {
+    const flicker = p.invuln > 0 && Math.floor(game.t * 30) % 2 === 0;
+    groundShadow(p.x, p.y + p.r, p.r, 0.4);
+    const pclip = ARCHER[playerAnim.clip];
+    const pidx = pclip ? frameIndex(playerAnim.t, pclip.fps, pclip.frames, pclip.loop) : 0;
+    ctx.globalAlpha = flicker ? 0.45 : 1;
+    const drewPlayer = pclip ? billboard(pclip, pidx, p.x, p.y + p.r, PLAYER_DISPLAY_H, p.facing.x < 0) : false;
+    ctx.globalAlpha = 1;
+    if (!drewPlayer) {
+      const s = vScale(p.y);
+      ctx.fillStyle = flicker ? "#9fd0ff" : "#3aa0ff";
+      circle(vX(p.x, p.y), vY(p.y), p.r * s, true, false);
+      ctx.strokeStyle = "#dff0ff"; ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(vX(p.x, p.y), vY(p.y));
+      ctx.lineTo(vX(p.x + p.facing.x * (p.r + 10), p.y), vY(p.y) + p.facing.y * (p.r + 10) * s);
+      ctx.stroke();
+    }
+  } });
+
+  bills.sort((a, z) => a.y - z.y);
+  for (const e of bills) e.draw();
+
+  // arrows in flight (over the characters)
   for (const a of game.arrows) {
     const s = vScale(a.y);
     ctx.save();
@@ -955,38 +1067,48 @@ function render() {
     ctx.restore();
   }
 
-  // player (archer) — animated sprite if loaded, else the placeholder circle.
-  // Flicker while invulnerable (after a hit / mid-dodge i-frames).
-  const flicker = p.invuln > 0 && Math.floor(game.t * 30) % 2 === 0;
-  groundShadow(p.x, p.y + p.r, p.r, 0.4);
-  const pclip = ARCHER[playerAnim.clip];
-  const pidx = pclip ? frameIndex(playerAnim.t, pclip.fps, pclip.frames, pclip.loop) : 0;
-  ctx.globalAlpha = flicker ? 0.45 : 1;
-  const drewPlayer = pclip
-    ? billboard(pclip, pidx, p.x, p.y + p.r, PLAYER_DISPLAY_H, p.facing.x < 0)
-    : false;
-  ctx.globalAlpha = 1;
-  if (!drewPlayer) {
-    const s = vScale(p.y);
-    ctx.fillStyle = flicker ? "#9fd0ff" : "#3aa0ff";
-    circle(vX(p.x, p.y), vY(p.y), p.r * s, true, false);
-    ctx.strokeStyle = "#dff0ff";
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(vX(p.x, p.y), vY(p.y));
-    ctx.lineTo(vX(p.x + p.facing.x * (p.r + 10), p.y), vY(p.y) + p.facing.y * (p.r + 10) * s);
-    ctx.stroke();
-  }
-
   // one-shot VFX, layered over the action
   drawEffects();
 
   ctx.restore(); // end screen-shake transform
 
-  // arena border (drawn un-shaken, over the playfield)
-  ctx.strokeStyle = "#2b3346";
-  ctx.lineWidth = 4;
-  ctx.strokeRect(2, 2, W - 4, H - 4);
+  // bloom — a soft additive glow of the playfield (lighting). Capture the frame
+  // at half-res, then composite it back blurred + brightened. Done before the
+  // HUD so the bars/text stay crisp. 2.5D only (keeps the 2D view classic/cheap).
+  if (is25d()) {
+    const gw = Math.max(1, canvas.width >> 1), gh = Math.max(1, canvas.height >> 1);
+    if (glowBuf.width !== gw) glowBuf.width = gw;
+    if (glowBuf.height !== gh) glowBuf.height = gh;
+    const gx = glowBuf.getContext("2d");
+    gx.clearRect(0, 0, gw, gh);
+    gx.drawImage(canvas, 0, 0, gw, gh);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = "lighter";
+    ctx.globalAlpha = 0.3;
+    ctx.filter = "blur(6px)";
+    ctx.drawImage(glowBuf, 0, 0, canvas.width, canvas.height);
+    ctx.filter = "none";
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+    ctx.restore();
+  }
+
+  // off-screen boss indicator — a chevron at the screen edge pointing to the
+  // golem when the camera can't see it (big arena + close follow-camera).
+  if (!game.over) {
+    const m = 44, bx = vX(b.x, b.y), by = vY(b.y);
+    if (bx < m || bx > W - m || by < m || by > H - m) {
+      const ang = Math.atan2(by - H / 2, bx - W / 2);
+      const cx = Math.max(m, Math.min(W - m, bx)), cy = Math.max(m, Math.min(H - m, by));
+      ctx.save();
+      ctx.translate(cx, cy); ctx.rotate(ang);
+      ctx.fillStyle = "rgba(231,84,79,0.92)";
+      ctx.beginPath(); ctx.moveTo(17, 0); ctx.lineTo(-11, -12); ctx.lineTo(-11, 12); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      label(ctx, "GOLEM", cx, cy + (cy < H / 2 ? 28 : -16), { size: 11, color: "#ffb0ac", bold: true });
+    }
+  }
 
   // HUD bars
   bar(20, 20, 300, 18, p.hp / p.maxHp, "#37d35a", `HP ${Math.ceil(p.hp)}/${p.maxHp}`);

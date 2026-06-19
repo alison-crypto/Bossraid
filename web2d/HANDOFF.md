@@ -100,7 +100,14 @@ fullscreen via dvh sizing + PWA manifest (iOS Add-to-Home-Screen hint) · #73 2.
 view (Settings toggle, default on): tilted perspective floor + upright billboard
 sprites with drop-shadows. View-only — sim untouched; `vX/vY/vScale` helpers are
 the identity in 2D so one render path serves both. Aiming is movement-based so no
-screen↔world cursor mapping was needed.
+screen↔world cursor mapping was needed. · #74 2.5D polish + follow-camera: WORLD
+enlarged to 3840×2400 (≈3×) with a camera locked on the archer (`camX/camY`,
+`CAM.zoom*`); viewport decoupled to a fixed 1280×800 (`W/H`); `vX/vY/vScale` now
+pan+zoom around the camera (perspective in 2.5D, flat in 2D); textured stone floor
+that scrolls/recedes under the camera (scanline-sampled in 2.5D, world-tiled in
+2D); depth-sorted billboards (far→near); bloom/glow pass + emissive golem aura &
+minion eyes; off-screen GOLEM direction chevron. Combatants now spawn near each
+other so the fight starts engaged on the big map.
 
 ## Backlog / next ideas
 - **Unlock** Knight/Mage characters + Cinder Wyrm boss (currently `locked:true` in
