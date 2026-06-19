@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Bossraid" />
+  <meta name="theme-color" content="#06070b" />
+  <link rel="manifest" href="./manifest.webmanifest" />
   <title>Bossraid 2D</title>
   <style>
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -12,6 +16,7 @@
       margin: 0; padding: 0;
       position: fixed; inset: 0;          /* lock the page — nothing scrolls/bounces */
       width: 100%; height: 100%;
+      height: 100dvh;                     /* fill the *visible* area under the mobile URL bar */
       overflow: hidden;
       overscroll-behavior: none;
       touch-action: none;                 /* no pan/zoom gestures anywhere */
@@ -25,10 +30,11 @@
     }
     canvas {
       display: block;
-      /* Grow to the largest 960x600-aspect (1.6) rectangle that fits the
-         viewport — fills the screen/fullscreen without distorting. */
-      width:  min(100vw, calc(100vh * 1.6));
-      height: min(100vh, calc(100vw / 1.6));
+      /* Grow to the largest 1.6-aspect rectangle that fits the *visible*
+         viewport — fills the screen/fullscreen without distorting. dvh tracks
+         the mobile URL bar so nothing is cut off behind it. */
+      width:  min(100vw, calc(100dvh * 1.6));
+      height: min(100dvh, calc(100vw / 1.6));
       touch-action: none;
     }
     #fs {

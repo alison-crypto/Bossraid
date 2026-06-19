@@ -269,6 +269,81 @@ test("stamina regenerates while idle after the delay", () => {
   assert.ok(g.player.stamina > 20, "stamina recovers when idle");
 });
 
+// --- phase-2 exploding pellets + phase-3 boulder minions ---------------------
+
+test("phase 2+: a scatter pellet detonates on a boulder, AoE-hitting a nearby player", () => {
+  const g = createGame();
+  g.boss.phase = 2; g.boss.state = "recover"; g.boss.t = 99;
+  g.player.x = 500; g.player.y = 300; g.player.invuln = 0;
+  g.rocks.push({ x: 480, y: 300, vx: 0, vy: 0, r: CFG.bigRockR, dmg: 0, big: true, tx: 480, ty: 300, travel: 0, landed: true, hit: true });
+  g.rocks.push({ x: 440, y: 300, vx: 600, vy: 0, r: CFG.smallRockR, dmg: CFG.smallRockDmg, big: false, hit: false });
+  const before = g.player.hp;
+  for (let k = 0; k < 10 && g.booms.length === 0; k++) step(g, input(), 1 / 60);
+  assert.ok(g.booms.length >= 1, "explosion spawned");
+  assert.ok(g.player.hp < before, "player caught in the blast");
+});
+
+test("phase 1: a pellet hitting a boulder is just spent — no explosion", () => {
+  const g = createGame();
+  g.boss.phase = 1; g.boss.state = "recover"; g.boss.t = 99;
+  g.player.x = 500; g.player.y = 300; g.player.invuln = 0;
+  g.rocks.push({ x: 480, y: 300, vx: 0, vy: 0, r: CFG.bigRockR, dmg: 0, big: true, tx: 480, ty: 300, travel: 0, landed: true, hit: true });
+  g.rocks.push({ x: 440, y: 300, vx: 600, vy: 0, r: CFG.smallRockR, dmg: CFG.smallRockDmg, big: false, hit: false });
+  for (let k = 0; k < 10; k++) step(g, input(), 1 / 60);
+  assert.equal(g.booms.length, 0, "no explosion in phase 1");
+  assert.equal(g.player.hp, 100, "player unharmed");
+});
+
+test("entering phase 3 raises landed boulders into chasing minions", () => {
+  const g = createGame();
+  g.player.x = 480; g.player.y = 360; g.player.facing = { x: 0, y: -1 };
+  g.boss.x = 480; g.boss.y = 300; g.boss.state = "recover"; g.boss.t = 99;
+  g.rocks.push({ x: 700, y: 300, vx: 0, vy: 0, r: CFG.bigRockR, dmg: 0, big: true, tx: 700, ty: 300, travel: 0, landed: true, hit: true });
+  g.boss.phase = 2; g.boss.hp = g.boss.maxHp / 3 + 10; // one arrow crosses into phase 3
+  step(g, input({ attack: true }), 1 / 60);
+  for (let k = 0; k < 60 && g.boss.phase < 3; k++) step(g, input(), 1 / 60);
+  assert.equal(g.boss.phase, 3);
+  assert.ok(g.minions.length >= 1, "boulder rose as a minion");
+  assert.equal(g.rocks.filter((r) => r.landed).length, 0, "boulder removed from the field");
+});
+
+test("a tiny golem chases the player and deals contact damage", () => {
+  const g = createGame();
+  g.boss.state = "recover"; g.boss.t = 99;
+  g.player.x = 500; g.player.y = 300; g.player.invuln = 0;
+  g.minions.push({ x: 520, y: 300, r: CFG.minionR, hp: CFG.minionHp, touchCd: 0 });
+  const before = g.player.hp;
+  step(g, input(), 1 / 60);
+  assert.ok(g.player.hp < before, "contact with a minion hurts");
+});
+
+test("arrows kill the squishy tiny golems", () => {
+  const g = createGame();
+  g.boss.state = "recover"; g.boss.t = 99;
+  g.player.x = 500; g.player.y = 400; g.player.facing = { x: 0, y: -1 }; g.player.invuln = 99;
+  g.minions.push({ x: 500, y: 300, r: CFG.minionR, hp: 5, touchCd: 99 });
+  step(g, input({ attack: true }), 1 / 60);
+  for (let k = 0; k < 60 && g.minions.length > 0; k++) step(g, input(), 1 / 60);
+  assert.equal(g.minions.length, 0, "minion destroyed by arrow");
+});
+
+test("in phase 3 a landing big rock stands up as a minion instead of a boulder", () => {
+  const g = createGame();
+  g.boss.phase = 3; g.boss.state = "recover"; g.boss.t = 99;
+  g.player.x = 100; g.player.y = 100; g.player.invuln = 99;
+  g.rocks.push({ x: 600, y: 400, vx: 0, vy: 0, r: CFG.bigRockR, dmg: CFG.bigRockDmg, big: true, tx: 600, ty: 400, travel: 0, landed: false, hit: true });
+  step(g, input(), 1 / 60);
+  assert.equal(g.rocks.length, 0, "no boulder left on the field");
+  assert.equal(g.minions.length, 1, "big rock rose as a minion");
+});
+
+test("explosion markers decay and clear", () => {
+  const g = createGame();
+  g.booms.push({ x: 100, y: 100, r: 50, t: 0.1, maxT: 0.1 });
+  for (let k = 0; k < 20; k++) step(g, input(), 1 / 60);
+  assert.equal(g.booms.length, 0, "boom cleared after its lifetime");
+});
+
 test("the game freezes once it is over", () => {
   const g = createGame();
   g.over = "won";

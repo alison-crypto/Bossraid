@@ -94,7 +94,9 @@ boulders block boss, dash FX · #60 fill-screen canvas · #61 hi-DPI crisp rende
 #62 adopt CombatMath · #63 3-phase golem · #64 stamina · #65 menu+select · #66 RPG
 core (equip/skills/XP) · #67 pause + RPG panels · #68 display options · #69 stamina
 retune · #71 gear unlocks by level (owns by level, equips by STR; inventory shows
-the unlock level).
+the unlock level) · #72 bigger arena (1280×800), golem phase-2 pellets detonate on
+boulders (AoE), phase-3 boulders rise as chasing minions (arrow-killable); mobile
+fullscreen via dvh sizing + PWA manifest (iOS Add-to-Home-Screen hint).
 
 ## Backlog / next ideas
 - **Unlock** Knight/Mage characters + Cinder Wyrm boss (currently `locked:true` in
