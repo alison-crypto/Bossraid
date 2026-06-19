@@ -120,6 +120,8 @@ export function createGame(opts = {}) {
       // active deflect window.
       cd: { volley: 0, explosive: 0, pierce: 0, deflect: 0, special: 0 },
       special: 0, deflectT: 0,
+      // view hint: the last ability performed + when (for one-shot animations).
+      act: "", actAt: -1,
     },
     boss: {
       x: CFG.arenaW * 0.5, y: CFG.arenaH * 0.5 - 260, r: CFG.bossR,
@@ -190,20 +192,21 @@ export function step(s, input, dt) {
 
   // ===== Abilities =========================================================
   const fa = Math.atan2(p.facing.y, p.facing.x); // facing angle
+  const act = (n) => { p.act = n; p.actAt = s.t; }; // flag a one-shot for the view
 
   // 3 attacks (stamina-gated; share the attack cooldown so one fires at a time).
   // Priority when several are held: power > spread > quick.
   if (p.attackCd <= 0 && p.dodge.t <= 0) {
     if (a2 && p.stamina >= CFG.staHeavy) { // Power Shot (charged)
       _spawnArrow(s, fa, { mult: heavyMultiplier(p.str, p.heavyBaseMult), heavy: true });
-      p.attackCd = CFG.heavyAttackCd; p.stamina -= CFG.staHeavy; p.staRegenT = CFG.staRegenDelay;
+      p.attackCd = CFG.heavyAttackCd; p.stamina -= CFG.staHeavy; p.staRegenT = CFG.staRegenDelay; act("power");
     } else if (a3 && p.stamina >= CFG.staSpread) { // Spread Shot (fan)
       const n = CFG.spreadCount, stepA = CFG.spreadArc / Math.max(1, n - 1);
       for (let k = 0; k < n; k++) _spawnArrow(s, fa + (k - (n - 1) / 2) * stepA, {});
-      p.attackCd = CFG.heavyAttackCd * 0.8; p.stamina -= CFG.staSpread; p.staRegenT = CFG.staRegenDelay;
+      p.attackCd = CFG.heavyAttackCd * 0.8; p.stamina -= CFG.staSpread; p.staRegenT = CFG.staRegenDelay; act("spread");
     } else if (a1 && p.stamina >= CFG.staShoot) { // Quick Shot
       _spawnArrow(s, fa, {});
-      p.attackCd = CFG.attackCd; p.stamina -= CFG.staShoot; p.staRegenT = CFG.staRegenDelay;
+      p.attackCd = CFG.attackCd; p.stamina -= CFG.staShoot; p.staRegenT = CFG.staRegenDelay; act("quick");
     }
   }
 
@@ -211,29 +214,29 @@ export function step(s, input, dt) {
   if (i.skill1 && p.cd.volley <= 0) { // Volley — a forward burst of arrows
     const n = CFG.volleyCount;
     for (let k = 0; k < n; k++) _spawnArrow(s, fa + (k - (n - 1) / 2) * CFG.volleyArc, { mult: 0.7 });
-    p.cd.volley = CFG.cdVolley;
+    p.cd.volley = CFG.cdVolley; act("volley");
   }
   if (i.skill2 && p.cd.explosive <= 0) { // Explosive Arrow — AoE on impact
     _spawnArrow(s, fa, { explosive: true, mult: 0.8, speed: CFG.arrowSpeed * 0.9 });
-    p.cd.explosive = CFG.cdExplosive;
+    p.cd.explosive = CFG.cdExplosive; act("explosive");
   }
   if (i.skill3 && p.cd.pierce <= 0) { // Piercing Bolt — rips minions, big boss hit
     _spawnArrow(s, fa, { pierce: true, mult: CFG.pierceMult, speed: CFG.arrowSpeed * 1.3 });
-    p.cd.pierce = CFG.cdPierce;
+    p.cd.pierce = CFG.cdPierce; act("pierce");
   }
 
   // Defence (Deflect): brief i-frames; bounces nearby rocks back at the golem.
   if (i.defend && p.cd.deflect <= 0) {
     p.deflectT = CFG.deflectTime;
     p.invuln = Math.max(p.invuln, CFG.deflectTime);
-    p.cd.deflect = CFG.cdDeflect;
+    p.cd.deflect = CFG.cdDeflect; act("deflect");
   }
 
   // Special — Arrow Storm. Needs a FULL meter AND the cooldown ready.
   if (i.special && p.special >= 1 && p.cd.special <= 0) {
     const n = CFG.stormCount, arc = Math.PI * 0.9;
     for (let k = 0; k < n; k++) _spawnArrow(s, fa + (k / Math.max(1, n - 1) - 0.5) * arc, { mult: 0.9 });
-    p.special = 0; p.cd.special = CFG.cdSpecial;
+    p.special = 0; p.cd.special = CFG.cdSpecial; act("arrowstorm");
   }
 
   // Stamina regen — fast while idle, slow while walking (after the post-action pause).
