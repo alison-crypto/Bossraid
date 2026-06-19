@@ -28,8 +28,8 @@ function saveSettings() { try { localStorage.setItem("bossraid.settings", JSON.s
 // Size the canvas ELEMENT per the chosen display mode (the #wrap flex centers it).
 function applyDisplay() {
   const s = canvas.style;
-  if (settings.display === "stretch") { s.width = "100vw"; s.height = "100vh"; }
-  else if (settings.display === "fit") { s.width = "min(100vw, calc(100vh * 1.6))"; s.height = "min(100vh, calc(100vw / 1.6))"; }
+  if (settings.display === "stretch") { s.width = "100vw"; s.height = "100dvh"; }
+  else if (settings.display === "fit") { s.width = "min(100vw, calc(100dvh * 1.6))"; s.height = "min(100dvh, calc(100vw / 1.6))"; }
   else { const px = { s960: 960, s1280: 1280, s1600: 1600 }[settings.display] || 960; s.width = px + "px"; s.height = Math.round(px / 1.6) + "px"; }
   resizeCanvas();
 }
@@ -58,7 +58,7 @@ const CHARACTERS = [
   { id: "mage", name: "Mage", locked: true, blurb: "Coming soon" },
 ];
 const BOSSES = [
-  { id: "golem", name: "Ancient Stone Golem", locked: false, blurb: "3 phases · smash · dash · rocks · quake" },
+  { id: "golem", name: "Ancient Stone Golem", locked: false, blurb: "3 phases · exploding rocks · rising minions" },
   { id: "wyrm", name: "Cinder Wyrm", locked: true, blurb: "Coming soon" },
 ];
 let profile = rpg.load();
@@ -99,23 +99,42 @@ const TOUCH = matchMedia("(pointer: coarse)").matches || "ontouchstart" in windo
 // touch scrolling/bounce (iOS ignores touch-action for the page scroll).
 document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
 
-// Fullscreen toggle button (⛶). Works on Android/desktop; iOS Safari can't
-// fullscreen a page (only <video>), but the locked layout already fills it.
+// Fullscreen toggle button (⛶). The real Fullscreen API works on Android/
+// desktop. iOS Safari has NO page fullscreen (only <video>), so there we point
+// the user at "Add to Home Screen", which launches the PWA chrome-less (true
+// fullscreen) via the manifest + apple-mobile-web-app-capable meta.
 const fsBtn = document.getElementById("fs");
+const FS_REQ = document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen;
+const inStandalone = matchMedia("(display-mode: fullscreen)").matches || matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
 function isFs() { return document.fullscreenElement || document.webkitFullscreenElement; }
+// Lightweight transient toast (used for the iOS fullscreen hint).
+let hintEl = null, hintTimer = 0;
+function showHint(msg) {
+  if (!hintEl) {
+    hintEl = document.createElement("div");
+    hintEl.style.cssText = "position:fixed;left:50%;top:14px;transform:translateX(-50%);max-width:86vw;z-index:20;" +
+      "padding:11px 15px;border-radius:11px;background:rgba(16,20,30,.94);color:#eaf0ff;" +
+      "border:1px solid rgba(180,200,230,.4);font:14px/1.35 system-ui,sans-serif;text-align:center;" +
+      "box-shadow:0 6px 20px rgba(0,0,0,.45);transition:opacity .25s;pointer-events:none;";
+    document.body.appendChild(hintEl);
+  }
+  hintEl.textContent = msg; hintEl.style.opacity = "1";
+  clearTimeout(hintTimer); hintTimer = setTimeout(() => { if (hintEl) hintEl.style.opacity = "0"; }, 5000);
+}
 function toggleFullscreen() {
+  if (!FS_REQ) { // iOS Safari: no page fullscreen available
+    showHint(inStandalone ? "You're already in fullscreen mode 🎮"
+      : "iPhone: tap the Share icon → “Add to Home Screen”, then open Bossraid from your home screen for fullscreen.");
+    return;
+  }
   try {
-    if (!isFs()) {
-      const el = document.documentElement;
-      const req = el.requestFullscreen || el.webkitRequestFullscreen;
-      if (req) { const r = req.call(el); if (r && r.catch) r.catch(() => {}); }
-    } else {
-      const exit = document.exitFullscreen || document.webkitExitFullscreen;
-      if (exit) exit.call(document);
-    }
+    if (!isFs()) { const r = FS_REQ.call(document.documentElement); if (r && r.catch) r.catch(() => {}); }
+    else { const exit = document.exitFullscreen || document.webkitExitFullscreen; if (exit) exit.call(document); }
   } catch (_) { /* not allowed here — fine */ }
 }
 if (fsBtn) {
+  // Hide the button entirely when already launched as a standalone PWA.
+  if (inStandalone) fsBtn.style.display = "none";
   fsBtn.addEventListener("click", toggleFullscreen);
   const sync = () => { fsBtn.textContent = isFs() ? "⊠" : "⛶"; };
   document.addEventListener("fullscreenchange", sync);
@@ -217,6 +236,8 @@ function drawFloor() {
 let prevBossStateFx = null, prevBossHpFx = null, prevPlayerHpFx = null, prevPhaseFx = null;
 const fxSeenRocks = new WeakSet();
 const fxSeenArrows = new WeakSet();
+const fxSeenBooms = new WeakSet();
+const fxSeenMinions = new WeakSet();
 function updateFxTriggers(dt) {
   const b = game.boss, p = game.player;
   if (b.state === "strike" && prevBossStateFx !== "strike") {
@@ -257,6 +278,14 @@ function updateFxTriggers(dt) {
 
   for (const rk of game.rocks) if (rk.landed && !fxSeenRocks.has(rk)) { fxSeenRocks.add(rk); spawnFx("rockshatter", rk.x, rk.y, 1); }
   for (const a of game.arrows) if (a.heavy && !fxSeenArrows.has(a)) { fxSeenArrows.add(a); spawnFx("runeburst", a.x, a.y, 0.7); }
+  // pellet detonations (phase 2+) — a shockwave + shatter at the blast point
+  for (const bm of game.booms) if (!fxSeenBooms.has(bm)) {
+    fxSeenBooms.add(bm); shakeT = Math.max(shakeT, 0.3);
+    spawnFx("shockwave", bm.x, bm.y, bm.r / 110);
+    spawnFx("rockshatter", bm.x, bm.y, 1.2);
+  }
+  // a boulder rising as a tiny golem (phase 3) — a rune burst as it stands up
+  for (const m of game.minions) if (!fxSeenMinions.has(m)) { fxSeenMinions.add(m); spawnFx("runeburst", m.x, m.y - m.r, 0.7); }
 }
 
 function tickEffects(dt) {
@@ -812,6 +841,41 @@ function render() {
       ctx.lineWidth = rk.landed ? 4 : 3;
       circle(rk.x, rk.y, rk.r, true, true);
     }
+  }
+
+  // tiny golems (phase 3): little stone bodies that bob as they chase, with
+  // glowing eyes turned toward the player and a thin health pip.
+  for (const m of game.minions) {
+    ctx.fillStyle = "rgba(0,0,0,0.4)";
+    ctx.beginPath();
+    ctx.ellipse(m.x, m.y + m.r * 0.8, m.r * 1.2, m.r * 0.45, 0, 0, Math.PI * 2);
+    ctx.fill();
+    const bob = Math.sin(game.t * 9 + m.x * 0.05) * 2;
+    const drew = ROCKS.ok && drawStrip(ctx, ROCKS, 0, m.x, m.y + bob + m.r, m.r * 2.4, false);
+    if (!drew) {
+      ctx.fillStyle = "#5b5142"; ctx.strokeStyle = "rgba(15,12,9,0.8)"; ctx.lineWidth = 3;
+      circle(m.x, m.y + bob, m.r, true, true);
+    }
+    // eyes toward the player
+    const ang = Math.atan2(p.y - m.y, p.x - m.x), ex = Math.cos(ang) * 4, ey = Math.sin(ang) * 4;
+    ctx.fillStyle = "#ff7a3a";
+    for (const sx of [-5, 5]) { ctx.beginPath(); ctx.arc(m.x + sx + ex, m.y + bob - 2 + ey, 2.2, 0, Math.PI * 2); ctx.fill(); }
+    // health pip
+    const hpW = m.r * 1.6, frac = Math.max(0, m.hp / CFG.minionHp);
+    ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(m.x - hpW / 2, m.y - m.r - 8, hpW, 3);
+    ctx.fillStyle = "#ff5a5a"; ctx.fillRect(m.x - hpW / 2, m.y - m.r - 8, hpW * frac, 3);
+  }
+
+  // pellet detonations — an expanding, fading shock ring
+  for (const bm of game.booms) {
+    const k = 1 - bm.t / bm.maxT; // 0 -> 1 over its lifetime
+    ctx.save();
+    ctx.globalAlpha = (1 - k) * 0.8;
+    ctx.strokeStyle = "#ff9c44"; ctx.lineWidth = 6 * (1 - k) + 2;
+    ctx.beginPath(); ctx.arc(bm.x, bm.y, bm.r * (0.35 + 0.65 * k), 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = (1 - k) * 0.35; ctx.fillStyle = "#ffd27a";
+    ctx.beginPath(); ctx.arc(bm.x, bm.y, bm.r * 0.5 * (1 - k), 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
   }
 
   // arrows in flight (drawn under the characters)

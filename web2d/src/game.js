@@ -24,7 +24,7 @@ export function deriveCombat(opts = {}) {
 }
 
 export const CFG = {
-  arenaW: 960, arenaH: 600,
+  arenaW: 1280, arenaH: 800,
   // Player (archer): shoots arrows in the facing direction. Light = quick shot,
   // heavy = a slower, stronger charged shot. meleeRange is kept as the boss's
   // chase-stop distance, not a player reach.
@@ -52,6 +52,13 @@ export const CFG = {
   scatterWindup: 0.8, scatterCount: 6, smallRockSpeed: 330, smallRockR: 12, smallRockDmg: 15, scatterRecover: 0.65,
   // 5) earthquake — arena-wide; only a dodge-roll's i-frames avoid it.
   quakeWindup: 1.1, quakeActive: 0.3, quakeRecover: 0.9, quakeDmg: 34,
+  // Phase 2+: a scatter pellet that strikes a boulder DETONATES, dealing AoE
+  // damage in a radius (the boulders become live minefields).
+  rockExplodeR: 120, rockExplodeDmg: 22, boomTime: 0.35,
+  // Phase 3: every boulder RISES as a tiny golem that chases the player and
+  // deals contact damage; arrows kill them (no DEF). New big rocks landing in
+  // phase 3 stand up as minions instead of resting as boulders.
+  minionR: 16, minionHp: 40, minionSpeed: 130, minionDmg: 14, minionTouchCd: 0.8,
 };
 
 // --- tiny vector helpers ----------------------------------------------------
@@ -98,6 +105,8 @@ export function createGame(opts = {}) {
     },
     arrows: [], // in-flight player arrows: { x, y, vx, vy, dmg, heavy }
     rocks: [],  // in-flight boss rocks:   { x, y, vx, vy, r, dmg, big }
+    minions: [], // phase-3 tiny golems:   { x, y, r, hp, touchCd }
+    booms: [],   // transient explosions (FX + already-applied AoE): { x, y, r, t, maxT }
   };
 }
 
@@ -174,6 +183,8 @@ export function step(s, input, dt) {
   _arrowsUpdate(s, dt);
   _bossUpdate(s, dt);
   _rocksUpdate(s, dt);
+  _minionsUpdate(s, dt);
+  _boomsUpdate(s, dt);
   return s;
 }
 
@@ -194,7 +205,44 @@ function _bossPhaseCheck(s) {
     b.phase = phase;
     b.state = "recover"; b.t = CFG.phaseStagger; b.cd = 0; // brief stagger
     b.slam.active = false; b.dash.active = false; b.quake.active = false;
+    if (phase >= 3) _raiseMinions(s); // boulders stand up and give chase
   }
+}
+
+// Phase 3 onset: every landed boulder becomes a tiny golem that hunts the
+// player. In-flight rocks are left alone (they convert when/if they land).
+function _raiseMinions(s) {
+  const remaining = [];
+  for (const rk of s.rocks) {
+    if (rk.landed) s.minions.push({ x: rk.x, y: rk.y, r: CFG.minionR, hp: CFG.minionHp, touchCd: 0 });
+    else remaining.push(rk);
+  }
+  s.rocks = remaining;
+}
+
+// A scatter pellet detonating on a boulder: spawn an FX/AoE boom and damage the
+// player if caught in the blast (i-frames still save them, via _hitPlayer).
+function _explodeAt(s, x, y) {
+  s.booms.push({ x, y, r: CFG.rockExplodeR, t: CFG.boomTime, maxT: CFG.boomTime });
+  if (dist(s.player, { x, y }) <= CFG.rockExplodeR + s.player.r) _hitPlayer(s, CFG.rockExplodeDmg);
+}
+
+// Advance the tiny golems: chase the player, deal contact damage on a cooldown.
+function _minionsUpdate(s, dt) {
+  const p = s.player;
+  for (const m of s.minions) {
+    m.touchCd = Math.max(0, m.touchCd - dt);
+    const u = unit(sub(p, m));
+    m.x = clamp(m.x + u.x * CFG.minionSpeed * dt, m.r, CFG.arenaW - m.r);
+    m.y = clamp(m.y + u.y * CFG.minionSpeed * dt, m.r, CFG.arenaH - m.r);
+    if (m.touchCd <= 0 && dist(m, p) <= m.r + p.r) { _hitPlayer(s, CFG.minionDmg); m.touchCd = CFG.minionTouchCd; }
+  }
+}
+
+// Tick down explosion markers (purely transient — the damage already landed).
+function _boomsUpdate(s, dt) {
+  for (const bm of s.booms) bm.t -= dt;
+  s.booms = s.booms.filter((bm) => bm.t > 0);
 }
 
 // Apply an incoming boss hit to the player (negated entirely by i-frames). All
@@ -243,16 +291,21 @@ function _rocksUpdate(s, dt) {
     rk.y += rk.vy * dt;
     if (!rk.hit && dist(rk, p) <= rk.r + p.r) { rk.hit = true; _hitPlayer(s, rk.dmg); }
 
-    // a flying rock is blocked by an existing boulder: the big rock lands
-    // against it, a scatter pellet is spent.
+    // a flying rock meets an existing boulder: the big rock lands against it; a
+    // scatter pellet is spent — but from phase 2 on, the pellet DETONATES.
     if (s.rocks.some((o) => o !== rk && o.landed && dist(rk, o) <= rk.r + o.r)) {
       if (rk.big) { rk.vx = 0; rk.vy = 0; rk.landed = true; kept.push(rk); }
+      else if (s.boss.phase >= 2) _explodeAt(s, rk.x, rk.y);
       continue;
     }
 
     if (rk.big) {
       rk.travel -= Math.hypot(rk.vx, rk.vy) * dt;
-      if (rk.travel <= 0) { rk.x = rk.tx; rk.y = rk.ty; rk.vx = 0; rk.vy = 0; rk.landed = true; }
+      if (rk.travel <= 0) {
+        rk.x = rk.tx; rk.y = rk.ty; rk.vx = 0; rk.vy = 0; rk.landed = true;
+        // In phase 3 a freshly-landed boulder stands straight up as a minion.
+        if (s.boss.phase >= 3) { s.minions.push({ x: rk.x, y: rk.y, r: CFG.minionR, hp: CFG.minionHp, touchCd: 0 }); continue; }
+      }
       kept.push(rk); // big rocks land in-arena; never culled
       continue;
     }
@@ -271,6 +324,12 @@ function _arrowsUpdate(s, dt) {
   for (const a of s.arrows) {
     a.x += a.vx * dt;
     a.y += a.vy * dt;
+    // tiny golems are squishy (no DEF) and die fast; an arrow is consumed on hit
+    let hitMinion = false;
+    for (const m of s.minions) {
+      if (m.hp > 0 && dist(a, m) <= m.r + CFG.arrowR) { m.hp -= a.dmg; hitMinion = true; break; }
+    }
+    if (hitMinion) { s.minions = s.minions.filter((m) => m.hp > 0); continue; }
     if (b.hp > 0 && dist(a, b) <= b.r + CFG.arrowR) {
       const dmg = incomingDamage(a.dmg, CFG.bossDef); // golem DEF subtracts
       b.hp = Math.max(0, b.hp - dmg);
