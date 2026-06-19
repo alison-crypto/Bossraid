@@ -123,6 +123,15 @@ readout. 68 unit tests (7 new for the kit).
     Y Explosive · B Pierce · LT Deflect · A Dash · Dpad-Up/R3 Special · Start pause.
   - **Keyboard:** WASD · J/K/L attacks · U/I/O skills · Space dash · Shift deflect ·
     E special · Esc/P pause.
+· #76 polish/bugfix pass: (1) fixed the joystick sticking in a corner after a
+retry — `resetInput()` clears stick/pointers/keys on startFight + quit; (2) visible
+arena **walls** — the floor is clipped to the arena polygon and everything beyond
+is a stone wall band + lit boundary (no more invisible barrier); (3) a clear
+top-centre **☰ Menu** button opening the full pause menu; (4) bigger touch buttons
+pulled in from the corners + larger joystick; (5) a **loading screen** (waits on
+all sprite/texture images via `img.complete`, 6s cap) so nothing pops in. Also
+fixed the 2.5D floor's scrolling seam (scanline sampler no longer reads past the
+tile edge).
 
 ## Backlog / next ideas
 - **Unlock** Knight/Mage characters + Cinder Wyrm boss (currently `locked:true` in
