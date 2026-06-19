@@ -131,7 +131,16 @@ top-centre **☰ Menu** button opening the full pause menu; (4) bigger touch but
 pulled in from the corners + larger joystick; (5) a **loading screen** (waits on
 all sprite/texture images via `img.complete`, 6s cap) so nothing pops in. Also
 fixed the 2.5D floor's scrolling seam (scanline sampler no longer reads past the
-tile edge).
+tile edge). · #77 ability animation slots wired (art pending). Sim stamps
+`player.act`/`actAt` whenever an attack/skill/special/deflect fires; the view
+plays a one-shot clip for it. New ARCHER clips added: power/spread/volley/
+explosive/pierce/deflect/arrowstorm (+ `ACT_CLIP` map). `rclip()` resolves any
+desired clip to one that has art, falling back ability clips → `shoot` → `idle`
+(and other clips → `idle`), so missing art animates sensibly instead of showing
+a placeholder; `bossClip` got the same idle-fallback. Drop frames named
+`archer_<clip>.png` (single-row strips, frame counts in the code) into assets/ to
+light them up. Full per-frame art-prompt pack (4K, one-image-per-frame) lives in
+the chat handoff / Drive.
 
 ## Backlog / next ideas
 - **Unlock** Knight/Mage characters + Cinder Wyrm boss (currently `locked:true` in

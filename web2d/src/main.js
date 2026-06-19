@@ -204,7 +204,28 @@ const ARCHER = {
   hit:   loadStrip("./assets/archer_hit.png",   4, 16, false),
   death: loadStrip("./assets/archer_death.png", 6, 9,  false),
   dodge: loadStrip("./assets/archer_dodge.png", 6, 18, false),
+  // New ability clips. Art is pending — these stay !ok and gracefully fall back
+  // to `shoot` (then `idle`) until the frames are dropped in. Frame counts match
+  // the art-prompt pack so the strips slot straight in.
+  power:      loadStrip("./assets/archer_power.png",      6, 14, false),
+  spread:     loadStrip("./assets/archer_spread.png",     5, 16, false),
+  volley:     loadStrip("./assets/archer_volley.png",     5, 18, false),
+  explosive:  loadStrip("./assets/archer_explosive.png",  5, 16, false),
+  pierce:     loadStrip("./assets/archer_pierce.png",     5, 16, false),
+  deflect:    loadStrip("./assets/archer_deflect.png",    4, 14, false),
+  arrowstorm: loadStrip("./assets/archer_arrowstorm.png", 8, 12, false),
 };
+// Which game.player.act maps to which clip; the set marks the "offensive" clips
+// that fall back to `shoot` when their bespoke art isn't loaded yet.
+const ACT_CLIP = { quick: "shoot", power: "power", spread: "spread", volley: "volley", explosive: "explosive", pierce: "pierce", deflect: "deflect", arrowstorm: "arrowstorm" };
+const ABILITY_CLIPS = new Set(["shoot", "power", "spread", "volley", "explosive", "pierce", "deflect", "arrowstorm"]);
+// Resolve a desired clip to one that actually has art loaded (graceful fallback).
+function rclip(name) {
+  const s = ARCHER[name];
+  if (s && s.ok) return name;
+  if (ABILITY_CLIPS.has(name)) return ARCHER.shoot.ok ? "shoot" : (ARCHER.idle.ok ? "idle" : name);
+  return ARCHER.idle.ok ? "idle" : name; // idle/walk/hit/death/dodge → idle if missing
+}
 const playerAnim = new Animator();
 
 // --- one-shot VFX -----------------------------------------------------------
@@ -526,49 +547,57 @@ function updateBossAnimSignals(dt) {
 // Priority: death > slam (attack) > hit flinch > walk (chasing) > idle.
 function bossClip() {
   const b = game.boss;
-  if (game.over === "won") return "death";
-  // Each attack now has its own animation (smash/dash/bigrock/scatter/quake).
-  if (b.state === "windup" || b.state === "strike") return b.attack;
-  if (bossHitT > 0) return "hit";
-  if (b.state === "idle" && bossMoving) return "walk";
-  return "idle";
+  let name = "idle";
+  if (game.over === "won") name = "death";
+  // Each attack has its own animation (smash/dash/bigrock/scatter/quake).
+  else if (b.state === "windup" || b.state === "strike") name = b.attack;
+  else if (bossHitT > 0) name = "hit";
+  else if (b.state === "idle" && bossMoving) name = "walk";
+  const s = GOLEM[name];
+  return (s && s.ok) ? name : (GOLEM.idle.ok ? "idle" : name); // fallback to idle if art missing
 }
 
-// View-only signals for the player: a brief shoot animation when an arrow is
-// fired, a flinch when damaged, and whether the player moved this frame.
-let playerShootT = 0;
+// View-only signals for the player: a one-shot ability animation when the sim
+// flags an action, a flinch when damaged, and whether the player moved.
+let playerOneShot = "";   // current one-shot ability clip name
+let playerOneShotT = 0;   // seconds remaining on it
+let prevActAt = -1;
 let playerHitT = 0;
 let prevPlayerHp = null;
-let prevArrowCount = 0;
 let prevPlayerPos = null;
 let playerMoving = false;
 
 function updatePlayerAnimSignals(dt) {
   const p = game.player;
-  if (game.arrows.length > prevArrowCount) {
-    playerShootT = clipDuration(ARCHER.shoot.fps, ARCHER.shoot.frames);
+  // the sim stamps p.actAt whenever an attack/skill/special/deflect fires
+  if (p.actAt !== prevActAt && p.actAt >= 0) {
+    playerOneShot = ACT_CLIP[p.act] || "shoot";
+    const st = ARCHER[rclip(playerOneShot)];
+    playerOneShotT = st ? clipDuration(st.fps, st.frames) : 0.3;
   }
-  prevArrowCount = game.arrows.length;
+  prevActAt = p.actAt;
+  playerOneShotT = Math.max(0, playerOneShotT - dt);
   if (prevPlayerHp !== null && p.hp < prevPlayerHp && p.hp > 0) {
     playerHitT = clipDuration(ARCHER.hit.fps, ARCHER.hit.frames);
   }
   prevPlayerHp = p.hp;
-  playerShootT = Math.max(0, playerShootT - dt);
   playerHitT = Math.max(0, playerHitT - dt);
   const moved = prevPlayerPos ? Math.hypot(p.x - prevPlayerPos.x, p.y - prevPlayerPos.y) : 0;
   playerMoving = moved > 0.5;
   prevPlayerPos = { x: p.x, y: p.y };
 }
 
-// Map player state -> clip. Priority: death > dodge > shoot > hit > walk > idle.
+// Map player state -> clip (resolved to loaded art). Priority:
+// death > dodge > deflect > ability one-shot > hit > walk > idle.
 function playerClip() {
   const p = game.player;
-  if (game.over === "lost") return "death";
-  if (p.dodge.t > 0) return "dodge";
-  if (playerShootT > 0) return "shoot";
-  if (playerHitT > 0) return "hit";
-  if (playerMoving) return "walk";
-  return "idle";
+  if (game.over === "lost") return rclip("death");
+  if (p.dodge.t > 0) return rclip("dodge");
+  if (p.deflectT > 0) return rclip("deflect");
+  if (playerOneShotT > 0) return rclip(playerOneShot);
+  if (playerHitT > 0) return rclip("hit");
+  if (playerMoving) return rclip("walk");
+  return rclip("idle");
 }
 
 function toCanvas(e) {
