@@ -19,8 +19,8 @@ const W = CFG.arenaW, H = CFG.arenaH;
 // Display settings (size mode + render quality), persisted.
 const DPR_CAP = { auto: () => Math.min(window.devicePixelRatio || 1, 2), "1": () => 1, "2": () => 2 };
 function loadSettings() {
-  try { return { display: "fit", dpr: "auto", ...JSON.parse(localStorage.getItem("bossraid.settings") || "{}") }; }
-  catch (_) { return { display: "fit", dpr: "auto" }; }
+  try { return { display: "fit", dpr: "auto", view: "2.5d", ...JSON.parse(localStorage.getItem("bossraid.settings") || "{}") }; }
+  catch (_) { return { display: "fit", dpr: "auto", view: "2.5d" }; }
 }
 let settings = loadSettings();
 function saveSettings() { try { localStorage.setItem("bossraid.settings", JSON.stringify(settings)); } catch (_) { /* no storage */ } }
@@ -301,11 +301,65 @@ function drawEffects() {
   for (const e of effects) {
     const cfg = FX[e.name], st = cfg.strip;
     const ix = frameIndex(e.t, st.fps, st.frames, false);
-    const targetH = cfg.h * e.scale;
+    const s = vScale(e.y), targetH = cfg.h * e.scale * s;
     if (cfg.add) ctx.globalCompositeOperation = "lighter";
-    drawStrip(ctx, st, ix, e.x, e.y + targetH / 2, targetH, false);
+    drawStrip(ctx, st, ix, vX(e.x, e.y), vY(e.y) + targetH / 2, targetH, false);
     if (cfg.add) ctx.globalCompositeOperation = "source-over";
   }
+}
+
+// --- 2.5D projection (view-only) --------------------------------------------
+// The simulation stays a flat top-down field. For the 2.5D view we tilt the
+// camera: the ground recedes (X converges + everything scales down toward the
+// far edge) and entities are drawn as upright billboards standing on their
+// projected ground point, each with a flattened drop-shadow. In 2D mode every
+// helper below is the identity, so the SAME draw code renders both views.
+const VIEW = { horizon: 150, farS: 0.72, nearS: 1.14, flat: 0.45 };
+function is25d() { return settings.view === "2.5d"; }
+function vDepth(wy) { return Math.max(0, Math.min(1, wy / H)); }
+function vScale(wy) { return is25d() ? VIEW.farS + (VIEW.nearS - VIEW.farS) * vDepth(wy) : 1; }
+function vX(wx, wy) { return is25d() ? W / 2 + (wx - W / 2) * vScale(wy) : wx; }
+function vY(wy) { return is25d() ? VIEW.horizon + (H - VIEW.horizon) * vDepth(wy) : wy; }
+// A grounded shadow ellipse under a world point (wy = the entity's feet).
+function groundShadow(wx, wy, r, alpha = 0.4) {
+  const s = vScale(wy);
+  ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+  ctx.beginPath();
+  ctx.ellipse(vX(wx, wy), vY(wy), r * 1.25 * s, r * (is25d() ? 0.4 : 0.5) * s, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+// Feet-anchored billboard sprite standing at a world point. Returns false (so
+// the caller can draw its placeholder) when the strip isn't ready.
+function billboard(strip, frame, wx, wyFeet, heightWorld, flip) {
+  return strip && strip.ok && drawStrip(ctx, strip, frame, vX(wx, wyFeet), vY(wyFeet), heightWorld * vScale(wyFeet), flip);
+}
+// Draw a circular gradient/stroke as a FLAT ground decal (ellipse in 2.5D). The
+// callback gets a context already translated to the ground point and flattened,
+// so it can draw a normal circle of radius `r*scale` at the origin.
+function groundDecal(wx, wy, draw) {
+  const s = vScale(wy);
+  ctx.save();
+  ctx.translate(vX(wx, wy), vY(wy));
+  if (is25d()) ctx.scale(1, VIEW.flat);
+  draw(s);
+  ctx.restore();
+}
+
+// Tilted perspective floor for the 2.5D view: a dark back wall above the horizon
+// and a receding stone plane with a converging grid below it.
+function drawFloor25d() {
+  let g = ctx.createLinearGradient(0, -24, 0, VIEW.horizon + 30);
+  g.addColorStop(0, "#070910"); g.addColorStop(1, "#13120d");
+  ctx.fillStyle = g; ctx.fillRect(-24, -24, W + 48, VIEW.horizon + 56);
+  g = ctx.createLinearGradient(0, VIEW.horizon, 0, H + 48);
+  g.addColorStop(0, "#181610"); g.addColorStop(1, "#26221b");
+  ctx.fillStyle = g; ctx.fillRect(-24, VIEW.horizon, W + 48, H - VIEW.horizon + 72);
+  ctx.strokeStyle = "rgba(125,114,92,0.14)"; ctx.lineWidth = 1;
+  for (let i = 1; i <= 14; i++) { const wy = (i / 14) * H; ctx.beginPath(); ctx.moveTo(vX(0, wy), vY(wy)); ctx.lineTo(vX(W, wy), vY(wy)); ctx.stroke(); }
+  for (let i = 0; i <= 12; i++) { const wx = (i / 12) * W; ctx.beginPath(); ctx.moveTo(vX(wx, 0), vY(0)); ctx.lineTo(vX(wx, H), vY(H)); ctx.stroke(); }
+  const vg = ctx.createRadialGradient(W / 2, H * 0.62, H * 0.2, W / 2, H * 0.62, H * 0.95);
+  vg.addColorStop(0, "rgba(0,0,0,0)"); vg.addColorStop(1, "rgba(0,0,0,0.5)");
+  ctx.fillStyle = vg; ctx.fillRect(-24, -24, W + 48, H + 48);
 }
 
 // View-only signals the sim doesn't expose directly: a brief flinch when the
@@ -538,6 +592,10 @@ function renderSettings() {
   const qw = 150, qg = 12, qtot = q.length * qw + (q.length - 1) * qg, qx0 = (W - qtot) / 2;
   q.forEach(([id, lbl], i) => uiButton(ctx, "dpr_" + id, lbl, qx0 + i * (qw + qg), 300, qw, 46, { active: settings.dpr === id }));
   label(ctx, "Fit keeps the aspect (bands on wide screens); Stretch fills edge-to-edge.", W / 2, 380, { size: 13, color: "#93a1bd" });
+  label(ctx, "Camera view", W / 2, 430, { size: 18, color: "#cfe0ff" });
+  const views = [["2d", "2D (top-down)"], ["2.5d", "2.5D (tilted)"]];
+  const vw = 200, vg = 12, vtot = views.length * vw + (views.length - 1) * vg, vx0 = (W - vtot) / 2;
+  views.forEach(([id, lbl], i) => uiButton(ctx, "view_" + id, lbl, vx0 + i * (vw + vg), 450, vw, 46, { active: settings.view === id }));
   uiButton(ctx, "backMenu", "◀ Back", 28, H - 66, 120, 44);
 }
 
@@ -669,6 +727,7 @@ function handleUiClick(x, y) {
     if (id === "backMenu") scene = "menu";
     else if (id.startsWith("disp_")) { settings.display = id.slice(5); saveSettings(); applyDisplay(); }
     else if (id.startsWith("dpr_")) { settings.dpr = id.slice(4); saveSettings(); applyDisplay(); }
+    else if (id.startsWith("view_")) { settings.view = id.slice(5); saveSettings(); }
     return;
   }
   if (scene === "menu" && id === "play") scene = "charSelect";
@@ -724,28 +783,30 @@ function render() {
   ctx.save();
   ctx.translate(ox, oy);
 
-  drawFloor();
+  if (is25d()) drawFloor25d(); else drawFloor();
 
   // smash danger zone — a ground decal AROUND the golem (the ring IS the hitbox).
   // windup: gradient pool + a shrinking inner ring counting down to impact.
   if (b.slam.active) {
-    const cx = b.slam.x, cy = b.slam.y, R = CFG.slamR;
-    if (b.state === "windup") {
-      const k = 1 - b.t / CFG.windup;
-      const g = ctx.createRadialGradient(cx, cy, R * 0.15, cx, cy, R);
-      g.addColorStop(0, `rgba(255,140,70,${0.06 + 0.10 * k})`);
-      g.addColorStop(0.75, `rgba(235,80,55,${0.10 + 0.20 * k})`);
-      g.addColorStop(1, "rgba(210,50,45,0)");
-      ctx.fillStyle = g; circle(cx, cy, R, true, false);
-      ctx.strokeStyle = `rgba(255,100,75,${0.5 + 0.4 * k})`; ctx.lineWidth = 3; circle(cx, cy, R, false, true);
-      ctx.strokeStyle = `rgba(255,210,150,${0.2 + 0.7 * k})`; ctx.lineWidth = 4; circle(cx, cy, Math.max(2, R * (1 - k)), false, true);
-    } else if (b.state === "strike") {
-      const g = ctx.createRadialGradient(cx, cy, R * 0.1, cx, cy, R);
-      g.addColorStop(0, "rgba(255,235,180,0.6)");
-      g.addColorStop(1, "rgba(255,150,70,0)");
-      ctx.fillStyle = g; circle(cx, cy, R, true, false);
-      ctx.strokeStyle = "rgba(255,230,160,0.95)"; ctx.lineWidth = 6; circle(cx, cy, R, false, true);
-    }
+    groundDecal(b.slam.x, b.slam.y, (s) => {
+      const R = CFG.slamR * s;
+      if (b.state === "windup") {
+        const k = 1 - b.t / CFG.windup;
+        const g = ctx.createRadialGradient(0, 0, R * 0.15, 0, 0, R);
+        g.addColorStop(0, `rgba(255,140,70,${0.06 + 0.10 * k})`);
+        g.addColorStop(0.75, `rgba(235,80,55,${0.10 + 0.20 * k})`);
+        g.addColorStop(1, "rgba(210,50,45,0)");
+        ctx.fillStyle = g; circle(0, 0, R, true, false);
+        ctx.strokeStyle = `rgba(255,100,75,${0.5 + 0.4 * k})`; ctx.lineWidth = 3; circle(0, 0, R, false, true);
+        ctx.strokeStyle = `rgba(255,210,150,${0.2 + 0.7 * k})`; ctx.lineWidth = 4; circle(0, 0, Math.max(2, R * (1 - k)), false, true);
+      } else if (b.state === "strike") {
+        const g = ctx.createRadialGradient(0, 0, R * 0.1, 0, 0, R);
+        g.addColorStop(0, "rgba(255,235,180,0.6)");
+        g.addColorStop(1, "rgba(255,150,70,0)");
+        ctx.fillStyle = g; circle(0, 0, R, true, false);
+        ctx.strokeStyle = "rgba(255,230,160,0.95)"; ctx.lineWidth = 6; circle(0, 0, R, false, true);
+      }
+    });
   }
 
   // dash-charge telegraph — a tapered danger lane with chevrons sliding along
@@ -753,7 +814,8 @@ function render() {
   if (b.attack === "dash" && b.state === "windup") {
     const k = 1 - b.t / CFG.dashWindup;
     ctx.save();
-    ctx.translate(b.x, b.y);
+    ctx.translate(vX(b.x, b.y), vY(b.y));
+    ctx.scale(vScale(b.y), vScale(b.y));
     ctx.rotate(Math.atan2(b.dash.dy, b.dash.dx));
     const L = 250, w = 48;
     const g = ctx.createLinearGradient(0, 0, L, 0);
@@ -791,7 +853,8 @@ function render() {
   // dash motion streaks — speed lines trailing behind the charging golem
   if (b.attack === "dash" && b.state === "strike" && b.dash.active) {
     ctx.save();
-    ctx.translate(b.x, b.y);
+    ctx.translate(vX(b.x, b.y), vY(b.y));
+    ctx.scale(vScale(b.y), vScale(b.y));
     ctx.rotate(Math.atan2(b.dash.dy, b.dash.dx));
     ctx.strokeStyle = "rgba(225,215,195,0.3)";
     ctx.lineWidth = 3;
@@ -806,27 +869,25 @@ function render() {
   }
 
   // boss — animated sprite if its art is loaded, else the placeholder circle
+  groundShadow(b.x, b.y + b.r, b.r * 1.1, 0.45);
   const clip = GOLEM[bossAnim.clip];
   const idx = clip ? frameIndex(bossAnim.t, clip.fps, clip.frames, clip.loop) : 0;
-  const drewBoss = clip ? drawStrip(ctx, clip, idx, b.x, b.y + b.r, BOSS_DISPLAY_H, p.x < b.x) : false;
+  const drewBoss = clip ? billboard(clip, idx, b.x, b.y + b.r, BOSS_DISPLAY_H, p.x < b.x) : false;
   if (!drewBoss) {
+    const s = vScale(b.y);
     ctx.fillStyle = { idle: "#6f7787", windup: "#c2553f", strike: "#ff9c44", recover: "#555b69" }[b.state];
-    circle(b.x, b.y, b.r, true, false);
+    circle(vX(b.x, b.y), vY(b.y), b.r * s, true, false);
     ctx.fillStyle = "#0c0e14";
     ctx.font = "bold 20px system-ui, sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("GOLEM", b.x, b.y + 6);
+    ctx.fillText("GOLEM", vX(b.x, b.y), vY(b.y) + 6);
   }
 
   // boss rocks as real stone: boulder (frame 0) for the big rock + landed
   // obstacle, a stable small-rock variant (frames 1–3) for scatter pellets.
   for (const rk of game.rocks) {
-    if (rk.landed) {
-      ctx.fillStyle = "rgba(0,0,0,0.4)"; // grounded shadow
-      ctx.beginPath();
-      ctx.ellipse(rk.x, rk.y + rk.r * 0.75, rk.r * 1.3, rk.r * 0.5, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    const s = vScale(rk.y);
+    if (rk.landed) groundShadow(rk.x, rk.y + rk.r * 0.75, rk.r * 1.05, 0.4);
     let frame = 0;
     if (!rk.big && !rk.landed) {
       let v = rockVariant.get(rk);
@@ -834,55 +895,58 @@ function render() {
       frame = v;
     }
     const size = rk.r * (rk.landed ? 3.2 : rk.big ? 2.9 : 2.7);
-    const drew = ROCKS.ok && drawStrip(ctx, ROCKS, frame, rk.x, rk.y + size / 2, size, false);
+    const drew = ROCKS.ok && billboard(ROCKS, frame, rk.x, rk.y + size / 2, size, false);
     if (!drew) {
       ctx.fillStyle = rk.landed ? "#6b5c47" : rk.big ? "#7c6b54" : "#8a8170";
       ctx.strokeStyle = "rgba(20,16,12,0.7)";
       ctx.lineWidth = rk.landed ? 4 : 3;
-      circle(rk.x, rk.y, rk.r, true, true);
+      circle(vX(rk.x, rk.y), vY(rk.y), rk.r * s, true, true);
     }
   }
 
   // tiny golems (phase 3): little stone bodies that bob as they chase, with
   // glowing eyes turned toward the player and a thin health pip.
   for (const m of game.minions) {
-    ctx.fillStyle = "rgba(0,0,0,0.4)";
-    ctx.beginPath();
-    ctx.ellipse(m.x, m.y + m.r * 0.8, m.r * 1.2, m.r * 0.45, 0, 0, Math.PI * 2);
-    ctx.fill();
-    const bob = Math.sin(game.t * 9 + m.x * 0.05) * 2;
-    const drew = ROCKS.ok && drawStrip(ctx, ROCKS, 0, m.x, m.y + bob + m.r, m.r * 2.4, false);
+    groundShadow(m.x, m.y + m.r * 0.8, m.r * 0.96, 0.4);
+    const s = vScale(m.y + m.r);
+    const bob = Math.sin(game.t * 9 + m.x * 0.05) * 2 * s;
+    const gx = vX(m.x, m.y + m.r), feetY = vY(m.y + m.r) + bob;
+    const drew = ROCKS.ok && drawStrip(ctx, ROCKS, 0, gx, feetY, m.r * 2.4 * s, false);
     if (!drew) {
       ctx.fillStyle = "#5b5142"; ctx.strokeStyle = "rgba(15,12,9,0.8)"; ctx.lineWidth = 3;
-      circle(m.x, m.y + bob, m.r, true, true);
+      circle(gx, feetY - m.r * 1.2 * s, m.r * s, true, true);
     }
-    // eyes toward the player
-    const ang = Math.atan2(p.y - m.y, p.x - m.x), ex = Math.cos(ang) * 4, ey = Math.sin(ang) * 4;
+    // eyes toward the player (at the body's center)
+    const cy = feetY - m.r * 1.2 * s;
+    const ang = Math.atan2(p.y - m.y, p.x - m.x), ex = Math.cos(ang) * 4 * s, ey = Math.sin(ang) * 4 * s;
     ctx.fillStyle = "#ff7a3a";
-    for (const sx of [-5, 5]) { ctx.beginPath(); ctx.arc(m.x + sx + ex, m.y + bob - 2 + ey, 2.2, 0, Math.PI * 2); ctx.fill(); }
-    // health pip
-    const hpW = m.r * 1.6, frac = Math.max(0, m.hp / CFG.minionHp);
-    ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(m.x - hpW / 2, m.y - m.r - 8, hpW, 3);
-    ctx.fillStyle = "#ff5a5a"; ctx.fillRect(m.x - hpW / 2, m.y - m.r - 8, hpW * frac, 3);
+    for (const sx of [-5, 5]) { ctx.beginPath(); ctx.arc(gx + sx * s + ex, cy + ey, 2.2 * s, 0, Math.PI * 2); ctx.fill(); }
+    // health pip above the head
+    const hpW = m.r * 1.6 * s, frac = Math.max(0, m.hp / CFG.minionHp), pipY = feetY - m.r * 2.4 * s - 6 * s;
+    ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(gx - hpW / 2, pipY, hpW, 3 * s);
+    ctx.fillStyle = "#ff5a5a"; ctx.fillRect(gx - hpW / 2, pipY, hpW * frac, 3 * s);
   }
 
   // pellet detonations — an expanding, fading shock ring
   for (const bm of game.booms) {
     const k = 1 - bm.t / bm.maxT; // 0 -> 1 over its lifetime
-    ctx.save();
-    ctx.globalAlpha = (1 - k) * 0.8;
-    ctx.strokeStyle = "#ff9c44"; ctx.lineWidth = 6 * (1 - k) + 2;
-    ctx.beginPath(); ctx.arc(bm.x, bm.y, bm.r * (0.35 + 0.65 * k), 0, Math.PI * 2); ctx.stroke();
-    ctx.globalAlpha = (1 - k) * 0.35; ctx.fillStyle = "#ffd27a";
-    ctx.beginPath(); ctx.arc(bm.x, bm.y, bm.r * 0.5 * (1 - k), 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
+    groundDecal(bm.x, bm.y, (s) => {
+      ctx.globalAlpha = (1 - k) * 0.8;
+      ctx.strokeStyle = "#ff9c44"; ctx.lineWidth = (6 * (1 - k) + 2);
+      ctx.beginPath(); ctx.arc(0, 0, bm.r * s * (0.35 + 0.65 * k), 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = (1 - k) * 0.35; ctx.fillStyle = "#ffd27a";
+      ctx.beginPath(); ctx.arc(0, 0, bm.r * s * 0.5 * (1 - k), 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    });
   }
 
   // arrows in flight (drawn under the characters)
   for (const a of game.arrows) {
+    const s = vScale(a.y);
     ctx.save();
-    ctx.translate(a.x, a.y);
+    ctx.translate(vX(a.x, a.y), vY(a.y));
     ctx.rotate(Math.atan2(a.vy, a.vx));
+    ctx.scale(s, s);
     ctx.strokeStyle = a.heavy ? "#ffd27a" : "#e8eefc";
     ctx.fillStyle = ctx.strokeStyle;
     ctx.lineWidth = a.heavy ? 4 : 3;
@@ -894,21 +958,23 @@ function render() {
   // player (archer) — animated sprite if loaded, else the placeholder circle.
   // Flicker while invulnerable (after a hit / mid-dodge i-frames).
   const flicker = p.invuln > 0 && Math.floor(game.t * 30) % 2 === 0;
+  groundShadow(p.x, p.y + p.r, p.r, 0.4);
   const pclip = ARCHER[playerAnim.clip];
   const pidx = pclip ? frameIndex(playerAnim.t, pclip.fps, pclip.frames, pclip.loop) : 0;
   ctx.globalAlpha = flicker ? 0.45 : 1;
   const drewPlayer = pclip
-    ? drawStrip(ctx, pclip, pidx, p.x, p.y + p.r, PLAYER_DISPLAY_H, p.facing.x < 0)
+    ? billboard(pclip, pidx, p.x, p.y + p.r, PLAYER_DISPLAY_H, p.facing.x < 0)
     : false;
   ctx.globalAlpha = 1;
   if (!drewPlayer) {
+    const s = vScale(p.y);
     ctx.fillStyle = flicker ? "#9fd0ff" : "#3aa0ff";
-    circle(p.x, p.y, p.r, true, false);
+    circle(vX(p.x, p.y), vY(p.y), p.r * s, true, false);
     ctx.strokeStyle = "#dff0ff";
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(p.x, p.y);
-    ctx.lineTo(p.x + p.facing.x * (p.r + 10), p.y + p.facing.y * (p.r + 10));
+    ctx.moveTo(vX(p.x, p.y), vY(p.y));
+    ctx.lineTo(vX(p.x + p.facing.x * (p.r + 10), p.y), vY(p.y) + p.facing.y * (p.r + 10) * s);
     ctx.stroke();
   }
 

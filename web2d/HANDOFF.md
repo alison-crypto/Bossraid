@@ -96,7 +96,11 @@ core (equip/skills/XP) · #67 pause + RPG panels · #68 display options · #69 s
 retune · #71 gear unlocks by level (owns by level, equips by STR; inventory shows
 the unlock level) · #72 bigger arena (1280×800), golem phase-2 pellets detonate on
 boulders (AoE), phase-3 boulders rise as chasing minions (arrow-killable); mobile
-fullscreen via dvh sizing + PWA manifest (iOS Add-to-Home-Screen hint).
+fullscreen via dvh sizing + PWA manifest (iOS Add-to-Home-Screen hint) · #73 2.5D
+view (Settings toggle, default on): tilted perspective floor + upright billboard
+sprites with drop-shadows. View-only — sim untouched; `vX/vY/vScale` helpers are
+the identity in 2D so one render path serves both. Aiming is movement-based so no
+screen↔world cursor mapping was needed.
 
 ## Backlog / next ideas
 - **Unlock** Knight/Mage characters + Cinder Wyrm boss (currently `locked:true` in
