@@ -50,7 +50,7 @@ document.addEventListener("webkitfullscreenchange", resizeCanvas);
 let game = createGame();
 
 // --- scene / flow -----------------------------------------------------------
-let scene = "menu"; // menu | charSelect | bossSelect | playing (paused added later)
+let scene = "loading"; // loading | menu | charSelect | bossSelect | playing | paused
 let selectedChar = "archer";
 let selectedBoss = "golem";
 const CHARACTERS = [
@@ -68,6 +68,16 @@ function startFight() {
   game = createGame(rpg.gameOptsFromProfile(profile));
   rewardGiven = false;
   scene = "playing";
+  resetInput(); // clear any held stick/buttons/keys so they can't carry over
+}
+// Drop all live input state (fixes the joystick sticking in a corner after a
+// retry when the movement thumb was still down on the death screen).
+function resetInput() {
+  stick.active = false; stick.id = null;
+  stick.base = { x: 0, y: 0 }; stick.cur = { x: 0, y: 0 };
+  pointers.clear();
+  prevHeld = {};
+  keys.clear();
 }
 // Award XP from a finished fight (damage dealt, + bonus on a win) once.
 function grantReward() {
@@ -143,22 +153,23 @@ if (fsBtn) {
 }
 
 // --- on-screen controls (canvas coords) ------------------------------------
-const STICK = { hintX: 120, hintY: H - 120, R: 78, knobR: 36 };
+const STICK = { hintX: 165, hintY: H - 165, R: 96, knobR: 46 };
 // On-screen controls emulating a gamepad: a right-hand cluster (3 attacks + dash
-// + defence) and a centre-bottom row of skills + the special. `cd` names the
+// + defence) and a far-right strip of skills + the special. Bigger and pulled in
+// from the corners so they're comfortable to hit on a phone. `cd` names the
 // game.player.cd field so the button can render its cooldown sweep.
 const BTN = [
-  // attack cluster + dash + defence (right-hand thumb arc)
-  { role: "attack1", label: "⚔", cx: W - 90,  cy: H - 95,  r: 46, color: "#3aa0ff" },
-  { role: "attack2", label: "⚡", cx: W - 188, cy: H - 140, r: 33, color: "#c8893f" },
-  { role: "attack3", label: "⋔", cx: W - 120, cy: H - 196, r: 30, color: "#49c0a0" },
-  { role: "dash",    label: "»", cx: W - 238, cy: H - 92,  r: 28, color: "#5ad1a0" },
-  { role: "defend",  label: "⛊", cx: W - 286, cy: H - 152, r: 28, color: "#6fb6ff", cd: "deflect" },
+  // attack cluster + dash + defence (right-hand thumb arc, inset from the corner)
+  { role: "attack1", label: "⚔", cx: W - 165, cy: H - 150, r: 56, color: "#3aa0ff" },
+  { role: "attack2", label: "⚡", cx: W - 282, cy: H - 200, r: 42, color: "#c8893f" },
+  { role: "attack3", label: "⋔", cx: W - 205, cy: H - 262, r: 40, color: "#49c0a0" },
+  { role: "dash",    label: "»", cx: W - 320, cy: H - 125, r: 38, color: "#5ad1a0" },
+  { role: "defend",  label: "⛊", cx: W - 378, cy: H - 198, r: 38, color: "#6fb6ff", cd: "deflect" },
   // skills + special (far-right vertical strip — clear of the movement zone)
-  { role: "special", label: "★", cx: W - 48, cy: H - 332, r: 30, color: "#ffc24a", cd: "special", meter: true },
-  { role: "skill1",  label: "1", cx: W - 48, cy: H - 262, r: 25, color: "#7a86ff", cd: "volley" },
-  { role: "skill2",  label: "2", cx: W - 48, cy: H - 205, r: 25, color: "#7a86ff", cd: "explosive" },
-  { role: "skill3",  label: "3", cx: W - 48, cy: H - 148, r: 25, color: "#7a86ff", cd: "pierce" },
+  { role: "special", label: "★", cx: W - 70, cy: H - 378, r: 38, color: "#ffc24a", cd: "special", meter: true },
+  { role: "skill1",  label: "1", cx: W - 70, cy: H - 295, r: 33, color: "#7a86ff", cd: "volley" },
+  { role: "skill2",  label: "2", cx: W - 70, cy: H - 222, r: 33, color: "#7a86ff", cd: "explosive" },
+  { role: "skill3",  label: "3", cx: W - 70, cy: H - 150, r: 33, color: "#7a86ff", cd: "pierce" },
 ];
 // Cooldown ceilings for the on-screen sweep + HUD readouts.
 const CD_MAX = { volley: CFG.cdVolley, explosive: CFG.cdExplosive, pierce: CFG.cdPierce, deflect: CFG.cdDeflect, special: CFG.cdSpecial };
@@ -400,6 +411,42 @@ function groundDecal(wx, wy, draw) {
   ctx.restore();
 }
 
+// Clip the current context to the projected arena rectangle (so the floor only
+// fills the playfield; everything beyond reads as wall/void).
+function clipArena() {
+  const A = CFG.arenaW, B = CFG.arenaH;
+  ctx.beginPath();
+  ctx.moveTo(vX(0, 0), vY(0)); ctx.lineTo(vX(A, 0), vY(0));
+  ctx.lineTo(vX(A, B), vY(B)); ctx.lineTo(vX(0, B), vY(B));
+  ctx.closePath(); ctx.clip();
+}
+// Solid stone walls around the arena edge — a band beyond the boundary plus a
+// lit base line, so you SEE the limit instead of bumping an invisible barrier.
+const WALL_T = 160; // how far the wall extends past the edge (world units)
+function drawWalls() {
+  const A = CFG.arenaW, B = CFG.arenaH, t = WALL_T;
+  const I = [[0, 0], [A, 0], [A, B], [0, B]];                 // arena corners
+  const O = [[-t, -t], [A + t, -t], [A + t, B + t], [-t, B + t]]; // outer corners
+  ctx.fillStyle = "#1b1812";
+  for (let e = 0; e < 4; e++) {
+    const n = (e + 1) % 4;
+    ctx.beginPath();
+    ctx.moveTo(vX(I[e][0], I[e][1]), vY(I[e][1]));
+    ctx.lineTo(vX(I[n][0], I[n][1]), vY(I[n][1]));
+    ctx.lineTo(vX(O[n][0], O[n][1]), vY(O[n][1]));
+    ctx.lineTo(vX(O[e][0], O[e][1]), vY(O[e][1]));
+    ctx.closePath(); ctx.fill();
+  }
+  // lit base line along the boundary + a soft inner shadow for depth
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "rgba(150,138,108,0.55)"; ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(vX(0, 0), vY(0)); ctx.lineTo(vX(A, 0), vY(0));
+  ctx.lineTo(vX(A, B), vY(B)); ctx.lineTo(vX(0, B), vY(B)); ctx.closePath(); ctx.stroke();
+  ctx.strokeStyle = "rgba(0,0,0,0.5)"; ctx.lineWidth = 12;
+  ctx.stroke();
+}
+
 // Camera-following tilted floor (2.5D): the real stone texture, sampled per
 // screen scanline by inverse-projecting to a world row and tiling it across at
 // that row's scale. It pans with the camera (sampling is by world coords) and
@@ -407,13 +454,16 @@ function groundDecal(wx, wy, draw) {
 function drawFloor25d() {
   if (!floorTexReady) buildFloorTex();
   const T = FLOOR_TILE, band = 8;
-  ctx.fillStyle = "#0a0b10"; ctx.fillRect(-24, -24, W + 48, H + 48);
+  ctx.fillStyle = "#0c0a08"; ctx.fillRect(-24, -24, W + 48, H + 48); // wall/void backdrop
+  ctx.save(); clipArena();
   for (let sy = -band; sy < H + band; sy += band) {
     // inverse vY: which world row sits at this screen band
     const wy = camY + (sy + band / 2 - H * VIEW.eyeY) / (CAM.zoom25 * VIEW.tiltY);
     const scale = vScale(wy);
     const srcY = ((wy % T) + T) % T;
-    const srcH = Math.max(1, band / (CAM.zoom25 * VIEW.tiltY));
+    // clamp the source row so it never reads PAST the tile's bottom edge — that
+    // overflow was the hard horizontal seam scrolling across the floor.
+    const srcH = Math.min(T - srcY, Math.max(1, band / (CAM.zoom25 * VIEW.tiltY)));
     const destW = T * scale;
     const worldLeft = camX + (0 - W / 2) / scale;
     let wx = Math.floor(worldLeft / T) * T;
@@ -423,6 +473,8 @@ function drawFloor25d() {
       ctx.drawImage(floorTex, 0, srcY, T, srcH, dx, sy, destW + 1, band + 1);
     }
   }
+  ctx.restore(); // end arena clip
+  drawWalls();
   // distance shading (top = farther/darker) + vignette
   let g = ctx.createLinearGradient(0, 0, 0, H);
   g.addColorStop(0, "rgba(5,6,11,0.8)"); g.addColorStop(0.45, "rgba(5,6,11,0)");
@@ -437,12 +489,15 @@ function drawFloor25d() {
 function drawFloorWorld2d() {
   if (!floorTexReady) buildFloorTex();
   const T = FLOOR_TILE, z = CAM.zoom2d, tw = T * z;
-  ctx.fillStyle = "#0e0d0a"; ctx.fillRect(-24, -24, W + 48, H + 48);
+  ctx.fillStyle = "#0c0a08"; ctx.fillRect(-24, -24, W + 48, H + 48); // wall/void backdrop
+  ctx.save(); clipArena();
   const wx0 = Math.floor((camX - (W / 2) / z) / T) * T;
   const wy0 = Math.floor((camY - (H * VIEW.eyeY) / z) / T) * T;
   for (let wy = wy0; vY(wy) < H + tw; wy += T)
     for (let wx = wx0; vX(wx, wy) < W + tw; wx += T)
       ctx.drawImage(floorTex, vX(wx, wy), vY(wy), tw + 1, tw + 1);
+  ctx.restore(); // end arena clip
+  drawWalls();
   const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.25, W / 2, H / 2, H * 0.9);
   vg.addColorStop(0, "rgba(0,0,0,0)"); vg.addColorStop(1, "rgba(0,0,0,0.5)");
   ctx.fillStyle = vg; ctx.fillRect(-24, -24, W + 48, H + 48);
@@ -865,7 +920,7 @@ function handleUiClick(x, y) {
   if (!id) return;
   if (scene === "paused") {
     if (id === "resume") scene = "playing";
-    else if (id === "quit") scene = "menu";
+    else if (id === "quit") { scene = "menu"; resetInput(); }
     else if (id.startsWith("tab_")) pauseTab = id.slice(4);
     else if (id.startsWith("stat_")) { rpg.spendStat(profile, id.slice(5)); reapplyProfile(); }
     else if (id.startsWith("skill_")) { rpg.rankUp(profile, id.slice(6)); reapplyProfile(); }
@@ -874,7 +929,7 @@ function handleUiClick(x, y) {
   }
   if (game.over) {
     if (id === "retry") startFight();
-    else if (id === "menu") scene = "menu";
+    else if (id === "menu") { scene = "menu"; resetInput(); }
     return;
   }
   if (scene === "settings") {
@@ -898,9 +953,45 @@ function handleUiClick(x, y) {
 }
 
 let last = performance.now();
+// Gather every sprite/texture image so the loading screen can wait for them.
+// (img.complete flips true on load OR error, so missing art never hangs it.)
+let LOAD_IMGS = null;
+function loadImages() {
+  if (LOAD_IMGS) return LOAD_IMGS;
+  const out = [], add = (s) => { if (s && s.img) out.push(s.img); };
+  for (const k in ARCHER) add(ARCHER[k]);
+  for (const k in GOLEM) add(GOLEM[k]);
+  for (const k in FX) add(FX[k] && FX[k].strip);
+  add(ROCKS);
+  if (floorImg) out.push(floorImg);
+  LOAD_IMGS = out;
+  return out;
+}
+function renderLoading(done, total) {
+  ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
+  ctx.fillStyle = "#06070b"; ctx.fillRect(0, 0, W, H);
+  label(ctx, "BOSSRAID", W / 2, H / 2 - 36, { size: 60, bold: true, color: "#eef3ff" });
+  label(ctx, "2 D", W / 2, H / 2 + 4, { size: 20, color: "#9fb3d6" });
+  const bw = 360, bx = W / 2 - bw / 2, by = H / 2 + 52;
+  ctx.fillStyle = "rgba(255,255,255,0.12)"; roundRect(ctx, bx, by, bw, 12, 6); ctx.fill();
+  ctx.fillStyle = "#7aa2ff"; roundRect(ctx, bx, by, bw * (total ? done / total : 1), 12, 6); ctx.fill();
+  label(ctx, "Loading…", W / 2, by + 42, { size: 15, color: "#8aa0c8" });
+}
+
+let loadStart = null;
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+
+  if (scene === "loading") {
+    if (loadStart === null) loadStart = now;
+    const imgs = loadImages(), done = imgs.filter((im) => im.complete).length;
+    renderLoading(done, imgs.length);
+    const elapsed = now - loadStart;
+    if ((done >= imgs.length && elapsed > 400) || elapsed > 6000) scene = "menu";
+    requestAnimationFrame(frame);
+    return;
+  }
 
   if (scene === "playing") {
     if (game.over) {
@@ -1210,10 +1301,11 @@ function render() {
     ctx.beginPath(); ctx.moveTo(x, 20); ctx.lineTo(x, 38); ctx.stroke();
   }
 
-  // on-canvas pause button (touch + mouse); cleared when paused/over
+  // on-canvas MENU button (opens the pause menu: stats / skills / inventory /
+  // resume / quit). Centred up top, big enough to thumb on a phone.
   if (!game.over) {
     uiBegin();
-    uiButton(ctx, "pauseBtn", "⏸", bossX - 52, 19, 40, 30, { accent: "rgba(30,36,50,0.8)", font: 16 });
+    uiButton(ctx, "pauseBtn", "☰ Menu", W / 2 - 72, 12, 144, 46, { accent: "rgba(28,34,48,0.9)", font: 19 });
   }
 
   if (TOUCH) drawControls();
