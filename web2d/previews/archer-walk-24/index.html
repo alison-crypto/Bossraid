@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bossraid Art Preview - Archer Walk 24</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #101218;
+      color: #edf2ff;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+    main {
+      width: min(1080px, 100%);
+      margin: 0 auto;
+      padding: 20px 14px 40px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(24px, 7vw, 38px);
+      letter-spacing: 0;
+    }
+    p { color: #b9c4dc; margin: 0 0 18px; }
+    .panel {
+      margin: 16px 0 26px;
+      padding: 12px;
+      background: #171b24;
+      border: 1px solid rgba(190, 210, 255, 0.16);
+      border-radius: 8px;
+    }
+    h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      color: #dfe8ff;
+    }
+    img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 6px;
+      background: #0b0e14;
+    }
+    a {
+      color: #91c7ff;
+      overflow-wrap: anywhere;
+    }
+    .links {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+      font-size: 15px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Archer Walk - 24 Frame Test</h1>
+    <p>Preview only. Not integrated into the game unless approved.</p>
+
+    <section class="panel">
+      <h2>Fixed Center + Floor GIF</h2>
+      <img src="./archer-walk-24-fixed-slow3x.gif?v=walk24a" alt="Archer walk 24 frame fixed center and floor animation preview" />
+      <p>3x slower preview. Frames were cleaned, floor-aligned, and center-aligned after generation.</p>
+      <div class="links">
+        <a href="./archer-walk-24-fixed-slow3x.gif?v=walk24a">Open slow GIF directly</a>
+        <a href="./archer-walk-24-fixed-24fps.gif?v=walk24a">Open 24fps GIF directly</a>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Center + Floor Guide Sheet</h2>
+      <img src="./archer-walk-24-fixed-center-floor-sheet.png?v=walk24a" alt="Archer walk 24 frame sheet with centerline and floor baseline guide" />
+      <p>Red is center. Cyan is floor. This is the check view for left/right drift and up/down drift.</p>
+      <div class="links">
+        <a href="./archer-walk-24-fixed-center-floor-sheet.png?v=walk24a">Open guide sheet directly</a>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Clean Fixed Sheet</h2>
+      <img src="./archer-walk-24-fixed-clean-sheet.png?v=walk24a" alt="Archer walk 24 frame clean fixed sheet" />
+      <div class="links">
+        <a href="./archer-walk-24-fixed-clean-sheet.png?v=walk24a">Open clean sheet directly</a>
+        <a href="./archer-walk-24-fixed-strip.png?v=walk24a">Open horizontal strip directly</a>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Raw Generated Source</h2>
+      <img src="./archer-walk-24-source.png?v=walk24a" alt="Raw generated 24 frame archer walk sheet with magenta background and guide lines" />
+      <div class="links">
+        <a href="./archer-walk-24-source.png?v=walk24a">Open raw source directly</a>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
