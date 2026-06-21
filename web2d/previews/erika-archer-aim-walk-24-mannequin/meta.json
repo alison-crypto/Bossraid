@@ -1,0 +1,14 @@
+{
+  "title": "Erika Archer Aim Walk - 24 Frame Mannequin Preview",
+  "sourceModel": "Game/1.Texture/1.Character/Erika Archer With Bow Arrow.fbx",
+  "sourceAnimation": "Game/Animations/Combat/Standing Aim Walk Forward.fbx",
+  "frames": 24,
+  "sampleFps": 24,
+  "gifDelayMs": 125,
+  "previewSpeed": "3x slower than 24 fps",
+  "renderNotes": [
+    "Root horizontal drift stripped for in-place sprite testing.",
+    "Floor baseline, center line, and grid are rendered behind the character.",
+    "Preview uses simplified mannequin-style materials instead of final textures."
+  ]
+}
