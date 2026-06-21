@@ -1,0 +1,17 @@
+{
+  "source": "C:\\Users\\aliso\\.codex\\generated_images\\019ee1c9-3bd8-7031-9d2b-4f395a7ca64e\\ig_0599349da5aec745016a383ba687f4819bab936e562b6247ab.png",
+  "output": "G:\\My Drive\\Alison Private\\Bossraid\\web2d\\previews\\male-archer-turnaround-transparent\\male-archer-turnaround-transparent.png",
+  "mode": "RGBA",
+  "size": [
+    1774,
+    887
+  ],
+  "alphaExtrema": [
+    0,
+    255
+  ],
+  "transparentPixels": 1072172,
+  "totalPixels": 1573538,
+  "note": "Generator output was RGB with fake checkerboard; this file is post-processed RGBA alpha.",
+  "cleanup": "Removed remaining high-value neutral fake-checker pixels globally."
+}
