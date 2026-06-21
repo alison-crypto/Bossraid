@@ -13,5 +13,7 @@
   "transparentPixels": 1072172,
   "totalPixels": 1573538,
   "note": "Generator output was RGB with fake checkerboard; this file is post-processed RGBA alpha.",
-  "cleanup": "Removed remaining high-value neutral fake-checker pixels globally."
+  "cleanup": "Removed remaining high-value neutral fake-checker pixels globally.",
+  "defringedOutput": "G:\\My Drive\\Alison Private\\Bossraid\\web2d\\previews\\male-archer-turnaround-transparent\\male-archer-turnaround-transparent-defringed.png",
+  "defringeNote": "Light neutral edge matte removed and remaining edge pixels un-matted from white for dark-background testing."
 }
