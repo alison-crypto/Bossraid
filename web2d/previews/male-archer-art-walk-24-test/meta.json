@@ -1,0 +1,9 @@
+{
+  "title": "Male Archer Art Walk - 24 Frame Test",
+  "sourceArt": "G:\\My Drive\\Alison Private\\2D Game\\Archer\\4K\\ChatGPT Image Jun 17, 2026, 08_20_46 PM (2).png",
+  "sourceUniquePoses": 8,
+  "outputFrames": 24,
+  "sampleFps": 24,
+  "gifDelayMs": 125,
+  "note": "2D source has 8 unique poses, held across 24 output frames for test preview."
+}
