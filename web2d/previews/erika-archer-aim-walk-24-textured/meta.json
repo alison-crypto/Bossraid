@@ -1,0 +1,20 @@
+{
+  "title": "Erika Archer Aim Walk - 24 Frame Textured Test",
+  "sourceModel": "Game/1.Texture/1.Character/Erika Archer With Bow Arrow.fbx",
+  "sourceAnimation": "Game/Animations/Combat/Standing Aim Walk Forward.fbx",
+  "frames": 24,
+  "sampleFps": 24,
+  "gifDelayMs": 125,
+  "previewSpeed": "3x slower than 24 fps",
+  "outputs": {
+    "guideFrames": "frames/",
+    "transparentFrames": "frames-transparent/",
+    "guideGif": "erika-archer-aim-walk-24-textured-slow3x.gif",
+    "transparentCheckerGif": "erika-archer-aim-walk-24-textured-transparent-checker-slow3x.gif"
+  },
+  "renderNotes": [
+    "Uses the same 24-frame timing and root-drift stripping as the mannequin preview.",
+    "Transparent PNG frames are rendered with real alpha using omitBackground.",
+    "Checkerboard previews are only visual proofs of transparency, not source art."
+  ]
+}
