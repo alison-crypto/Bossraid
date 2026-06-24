@@ -79,11 +79,12 @@
         if (cfg.lock) {
           // Non-bow clips (idle/walk/run) don't pose the wrist for a bow, so the
           // rigidly-parented bow flips sideways. Instead pin it to the hand's
-          // POSITION but force a fixed upright orientation (limbs vertical, string
-          // toward her). Parented to the scene so we set world transform directly.
+          // POSITION but orient it relative to the HIPS (body facing) + a fixed
+          // offset — so "string toward her / riser toward target" stays correct no
+          // matter which way the clip faces. Parented to the scene (world transform).
           scene.add(g);
           g.scale.multiplyScalar(cfg.scale ?? 0.6);
-          attachments.push({ obj: g, bone, quat: new THREE.Quaternion().setFromEuler(euler), pos: cfg.pos || [0, 0, 0] });
+          attachments.push({ obj: g, bone, offset: new THREE.Quaternion().setFromEuler(euler), pos: cfg.pos || [0, 0, 0] });
         } else {
           // Bow clips (draw/shoot): rigidly parent to the hand so it rides the draw.
           model.updateMatrixWorld(true);
@@ -141,10 +142,12 @@
         }
         if (attachments.length) {
           model.updateMatrixWorld(true);
+          const hq = new THREE.Quaternion();
+          if (anchor) anchor.getWorldQuaternion(hq); // body facing
           for (const at of attachments) {
             at.bone.getWorldPosition(v);
             at.obj.position.set(v.x + at.pos[0], v.y + at.pos[1], v.z + at.pos[2]);
-            at.obj.quaternion.copy(at.quat);
+            at.obj.quaternion.copy(hq).multiply(at.offset);
           }
         }
         renderer.render(scene, cam);
