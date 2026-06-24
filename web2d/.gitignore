@@ -1,0 +1,10 @@
+# 3D-render pipeline intermediates (large; regenerated locally, not for the repo)
+art-frames/
+art-processed/
+node_modules/
+
+# previews: publish only the curated page + its gifs, not WIP experiments
+previews/*
+!previews/index.html
+!previews/erika_walk_side.gif
+!previews/erika_shoot.gif
