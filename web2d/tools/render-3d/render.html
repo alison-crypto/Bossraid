@@ -17,9 +17,11 @@
   <script type="module">
     import * as THREE from "three";
     import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+    import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
     import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
     const loader = new GLTFLoader();
+    const fbxLoader = new FBXLoader();
     const b64ToBuf = (b64) => {
       const bin = atob(b64), len = bin.length, bytes = new Uint8Array(len);
       for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
@@ -112,9 +114,19 @@
       const ground = opts.ground !== false;
       let aX = 0, aY = 0, aZ = 0;
 
-      // clip: prefer an external anim glb, else an embedded clip
+      // clip: prefer a Mixamo FBX (loaded directly — no glb conversion needed),
+      // then an external anim glb, else an embedded clip
       let clip = null;
-      if (opts.animB64) { const a = await parseGlb(opts.animB64); clip = a.animations[0]; }
+      if (opts.animFbxB64) {
+        const f = fbxLoader.parse(b64ToBuf(opts.animFbxB64), "");
+        clip = f.animations[0];
+        // Mixamo FBX is in centimetres; our Erika.glb skeleton is in metres, so the
+        // translation tracks (esp. hips) are ~100x too big and throw the model off
+        // screen. Scale .position tracks down to match.
+        const ps = opts.fbxPosScale ?? 0.01;
+        for (const t of clip.tracks) if (/\.position$/.test(t.name)) for (let i = 0; i < t.values.length; i++) t.values[i] *= ps;
+      }
+      else if (opts.animB64) { const a = await parseGlb(opts.animB64); clip = a.animations[0]; }
       else if (gltf.animations?.length) clip = opts.clipName ? gltf.animations.find((c) => c.name === opts.clipName) : gltf.animations[0];
       const mixer = clip ? new THREE.AnimationMixer(model) : null;
       let duration = 0;
