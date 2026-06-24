@@ -1,0 +1,160 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>html, body { margin: 0; background: transparent; } #c { display: block; }</style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <script type="module">
+    import * as THREE from "three";
+    import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+    import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+
+    const loader = new GLTFLoader();
+    const b64ToBuf = (b64) => {
+      const bin = atob(b64), len = bin.length, bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+      return bytes.buffer;
+    };
+    const parseGlb = (b64) => new Promise((res, rej) => loader.parse(b64ToBuf(b64), "", res, rej));
+
+    // Render `frames` evenly-spaced poses of a clip into transparent PNG dataURLs,
+    // at a fixed 3/4 top-down camera so they drop straight into the 2.5D game.
+    window.renderFrames = async (opts) => {
+      const size = opts.size || 1024;
+      const canvas = document.getElementById("c");
+      const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
+      renderer.setSize(size, size);
+      renderer.setClearColor(0x000000, 0);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.0;
+
+      const scene = new THREE.Scene();
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; // lights PBR materials
+      scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+      const key = new THREE.DirectionalLight(0xfff2e0, 2.4); key.position.set(-4, 7, 5); scene.add(key);
+      const rim = new THREE.DirectionalLight(0x88aaff, 0.7); rim.position.set(4, 3, -5); scene.add(rim);
+
+      const gltf = await parseGlb(opts.charB64);
+      const model = gltf.scene;
+      scene.add(model);
+      // Skinned meshes are frustum-culled by their BIND-pose bounds; root-motion
+      // clips push the animated mesh out of that sphere and it vanishes. Disable
+      // culling so it always renders.
+      model.traverse((o) => { if (o.isMesh || o.isSkinnedMesh) o.frustumCulled = false; });
+
+      // normalize: height -> 1 unit, centered on X/Z, feet at y=0
+      let box = new THREE.Box3().setFromObject(model);
+      const dim = new THREE.Vector3(); box.getSize(dim);
+      model.scale.setScalar(1 / (dim.y || 1));
+      box = new THREE.Box3().setFromObject(model);
+      model.position.x -= (box.min.x + box.max.x) / 2;
+      model.position.z -= (box.min.z + box.max.z) / 2;
+      model.position.y -= box.min.y;
+
+      // weapons: parent the bow to the left hand and an arrow to the right hand so
+      // they ride the animation. Offsets are tuned in ~world units (a grip group
+      // cancels the hand bone's tiny world scale so x/y/z/scale read intuitively).
+      const attachments = []; // locked weapons get re-pinned/re-oriented each frame
+      const findBone = (re) => { let b = null; model.traverse((o) => { if (!b && o.isBone && re.test(o.name)) b = o; }); return b; };
+      const attach = async (b64v, boneRe, cfg) => {
+        if (!b64v) return;
+        const g = (await parseGlb(b64v)).scene;
+        let bb = new THREE.Box3().setFromObject(g); const bd = new THREE.Vector3(); bb.getSize(bd);
+        g.scale.setScalar(1 / (Math.max(bd.x, bd.y, bd.z) || 1)); // normalize: max dim -> 1 unit
+        const bone = findBone(boneRe); if (!bone) return;
+        const r = cfg.rot || [0, 0, 0];
+        const euler = new THREE.Euler(r[0] * Math.PI / 180, r[1] * Math.PI / 180, r[2] * Math.PI / 180);
+        if (cfg.lock) {
+          // Non-bow clips (idle/walk/run) don't pose the wrist for a bow, so the
+          // rigidly-parented bow flips sideways. Instead pin it to the hand's
+          // POSITION but force a fixed upright orientation (limbs vertical, string
+          // toward her). Parented to the scene so we set world transform directly.
+          scene.add(g);
+          g.scale.multiplyScalar(cfg.scale ?? 0.6);
+          attachments.push({ obj: g, bone, quat: new THREE.Quaternion().setFromEuler(euler), pos: cfg.pos || [0, 0, 0] });
+        } else {
+          // Bow clips (draw/shoot): rigidly parent to the hand so it rides the draw.
+          model.updateMatrixWorld(true);
+          const ws = new THREE.Vector3(); bone.getWorldScale(ws);
+          const grip = new THREE.Group(); grip.scale.setScalar(1 / (ws.x || 1)); bone.add(grip); grip.add(g);
+          g.scale.multiplyScalar(cfg.scale ?? 0.9);
+          const p = cfg.pos || [0, 0, 0]; g.position.set(p[0], p[1], p[2]);
+          g.rotation.copy(euler);
+        }
+      };
+      await attach(opts.bowB64, /LeftHand$/i, opts.bow || {});
+      await attach(opts.arrowB64, /RightHand$/i, opts.arrowCfg || {});
+
+      // hip anchor — keep the character planted so it doesn't bob/drift ("jump")
+      let anchor = null;
+      model.traverse((o) => { if (!anchor && o.isBone && /hip|pelvis|root/i.test(o.name)) anchor = o; });
+      if (!anchor) model.traverse((o) => { if (!anchor && o.isBone && /spine/i.test(o.name)) anchor = o; });
+      const ground = opts.ground !== false;
+      let aX = 0, aY = 0, aZ = 0;
+
+      // clip: prefer an external anim glb, else an embedded clip
+      let clip = null;
+      if (opts.animB64) { const a = await parseGlb(opts.animB64); clip = a.animations[0]; }
+      else if (gltf.animations?.length) clip = opts.clipName ? gltf.animations.find((c) => c.name === opts.clipName) : gltf.animations[0];
+      const mixer = clip ? new THREE.AnimationMixer(model) : null;
+      let duration = 0;
+      if (mixer && clip) { mixer.clipAction(clip).play(); duration = clip.duration; }
+
+      // camera — 3/4 view, pitched down ~`pitch`°, yaw `yaw`°
+      const cam = new THREE.PerspectiveCamera(opts.cam?.fov ?? 26, 1, 0.01, 100);
+      const pitch = (opts.cam?.pitch ?? 30) * Math.PI / 180;
+      const yaw = (opts.cam?.yaw ?? 18) * Math.PI / 180;
+      const dist = opts.cam?.dist ?? 3.3;
+      const tgtY = opts.cam?.targetY ?? 0.52;
+      cam.position.set(Math.sin(yaw) * Math.cos(pitch) * dist, tgtY + Math.sin(pitch) * dist, Math.cos(yaw) * Math.cos(pitch) * dist);
+      cam.lookAt(0, tgtY, 0);
+
+      // frame count: explicit `frames`, else sample at `fps` across the clip
+      // (so fast actions get few frames, loops get more), capped by `maxFrames`.
+      let frames = opts.frames || 24;
+      if (opts.fps && duration > 0) frames = Math.min(opts.maxFrames || 999, Math.max(2, Math.round(duration * opts.fps)));
+      const out = [];
+      const v = new THREE.Vector3();
+      for (let i = 0; i < frames; i++) {
+        const t = duration * (opts.loop ? i / frames : (frames > 1 ? i / (frames - 1) : 0));
+        if (mixer) mixer.setTime(t);
+        if (ground && anchor) {
+          model.updateMatrixWorld(true);
+          anchor.getWorldPosition(v);
+          if (i === 0) { aX = v.x; aY = v.y; aZ = v.z; }
+          model.position.x += aX - v.x;
+          model.position.y += aY - v.y;
+          model.position.z += aZ - v.z; // cancel forward root motion (run in place)
+          model.updateMatrixWorld(true);
+        }
+        if (attachments.length) {
+          model.updateMatrixWorld(true);
+          for (const at of attachments) {
+            at.bone.getWorldPosition(v);
+            at.obj.position.set(v.x + at.pos[0], v.y + at.pos[1], v.z + at.pos[2]);
+            at.obj.quaternion.copy(at.quat);
+          }
+        }
+        renderer.render(scene, cam);
+        out.push(canvas.toDataURL("image/png"));
+      }
+      renderer.dispose();
+      return { frames: out, duration };
+    };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>
