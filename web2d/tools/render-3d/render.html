@@ -58,16 +58,34 @@
       // clips push the animated mesh out of that sphere and it vanishes. Disable
       // culling so it always renders.
       model.traverse((o) => { if (o.isMesh || o.isSkinnedMesh) o.frustumCulled = false; });
+      // Mixamo clothes meshes often have inverted normals (back-face culled) and a
+      // spurious alpha channel that Blender exports as transparent -> the character
+      // renders "naked". Force double-sided + opaque so everything shows.
+      model.traverse((o) => { if ((o.isMesh || o.isSkinnedMesh) && o.material) { (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { m.side = THREE.DoubleSide; m.transparent = false; m.alphaTest = 0; m.depthWrite = true; }); } });
       // optional: replace materials with a neutral matte so an FBX char (whose
       // embedded textures may not load -> renders black) is clearly visible. The
       // bow protrudes, so its shape/orientation reads even at one flat colour.
       if (opts.flatMat) model.traverse((o) => { if (o.isMesh || o.isSkinnedMesh) o.material = new THREE.MeshStandardMaterial({ color: 0xc2c7d0, roughness: 0.65, metalness: 0.0 }); });
+      // layer rendering for swappable weapons: showOnly renders ONLY meshes whose
+      // name matches (e.g. the bow), hide renders everything EXCEPT matches (the
+      // body). Same skeleton/clip/camera -> the two layers composite perfectly.
+      if (opts.showOnly) { const re = new RegExp(opts.showOnly, "i"); model.traverse((o) => { if (o.isMesh || o.isSkinnedMesh) o.visible = re.test(o.name); }); }
+      if (opts.hide) { const re = new RegExp(opts.hide, "i"); model.traverse((o) => { if ((o.isMesh || o.isSkinnedMesh) && re.test(o.name)) o.visible = false; }); }
 
-      // normalize: height -> 1 unit, centered on X/Z, feet at y=0
-      let box = new THREE.Box3().setFromObject(model);
+      // normalize: height -> 1 unit, centered on X/Z, feet at y=0. Fit to the BODY
+      // only — weapons/armor (bow, arrow, sword, quiver) must not affect framing,
+      // or a held bow inflates the bbox and the body shrinks/shifts off-screen.
+      const EXCLUDE_FIT = /bow|arrow|sword|axe|mace|staff|hammer|shield|dagger|weapon|quiver/i;
+      const fitBox = () => {
+        const b = new THREE.Box3(); let any = false;
+        model.updateMatrixWorld(true);
+        model.traverse((o) => { if ((o.isMesh || o.isSkinnedMesh) && o.visible && !EXCLUDE_FIT.test(o.name)) { b.expandByObject(o); any = true; } });
+        return any ? b : new THREE.Box3().setFromObject(model);
+      };
+      let box = fitBox();
       const dim = new THREE.Vector3(); box.getSize(dim);
       model.scale.setScalar(1 / (dim.y || 1));
-      box = new THREE.Box3().setFromObject(model);
+      box = fitBox();
       model.position.x -= (box.min.x + box.max.x) / 2;
       model.position.z -= (box.min.z + box.max.z) / 2;
       model.position.y -= box.min.y;
@@ -181,6 +199,46 @@
       }
       renderer.dispose();
       return { frames: out, duration };
+    };
+
+    // Inspect a character FBX: find bow/arrow nodes, report their parent bone and
+    // local transform so we can replicate the rig's exact bow attachment.
+    window.inspectChar = async (b64) => {
+      const root = fbxLoader.parse(b64ToBuf(b64), "");
+      const hits = [];
+      root.traverse((o) => {
+        if (/bow|arrow|weapon|quiver/i.test(o.name) && !o.isBone) {
+          const p = o.position, q = o.quaternion, s = o.scale;
+          hits.push({
+            name: o.name, type: o.type, parent: o.parent?.name || null, parentType: o.parent?.type || null,
+            pos: [p.x, p.y, p.z], quat: [q.x, q.y, q.z, q.w], scale: [s.x, s.y, s.z],
+          });
+        }
+      });
+      const bones = [];
+      root.traverse((o) => { if (o.isBone && /hand|weapon|prop/i.test(o.name)) bones.push(o.name); });
+      // compute the bow's bind-pose transform RELATIVE TO the left-hand bone, so we
+      // can rigidly attach our swappable bow there and have it track the hand like
+      // the skinned reference does.
+      root.updateMatrixWorld(true);
+      let hand = null, bow = null;
+      root.traverse((o) => { if (o.isBone && /LeftHand$/i.test(o.name)) hand = hand || o; });
+      root.traverse((o) => { if (/bow/i.test(o.name) && (o.isMesh || o.isSkinnedMesh)) bow = bow || o; });
+      let rel = null;
+      if (hand && bow) {
+        const bb = new THREE.Box3().setFromObject(bow);
+        const c = new THREE.Vector3(); bb.getCenter(c);
+        const size = new THREE.Vector3(); bb.getSize(size);
+        const handPos = new THREE.Vector3(), handQ = new THREE.Quaternion(), handS = new THREE.Vector3();
+        hand.matrixWorld.decompose(handPos, handQ, handS);
+        const inv = new THREE.Matrix4().copy(hand.matrixWorld).invert();
+        const localC = c.clone().applyMatrix4(inv);
+        rel = { handBone: hand.name, bowWorldCenter: [c.x, c.y, c.z], bowWorldSize: [size.x, size.y, size.z],
+          handWorldScale: [handS.x, handS.y, handS.z], bowCenterInHandLocal: [localC.x, localC.y, localC.z] };
+      }
+      const allMeshes = [];
+      root.traverse((o) => { if (o.isMesh || o.isSkinnedMesh) allMeshes.push({ name: o.name, type: o.type, visible: o.visible }); });
+      return { hits, handBones: [...new Set(bones)], rel, allMeshes };
     };
 
     window.__ready = true;

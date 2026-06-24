@@ -15,3 +15,5 @@ previews/*
 !previews/archer/*.gif
 !previews/cmp/
 !previews/cmp/*.gif
+!previews/skinned_bow_form.gif
+!previews/skinned_bow_textured.gif
