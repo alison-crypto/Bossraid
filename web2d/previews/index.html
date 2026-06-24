@@ -11,25 +11,31 @@
     .sub { color: #8a93a6; font-size: 13px; margin-bottom: 18px; }
     .card { background: #15140f; border: 1px solid #2a2c36; border-radius: 14px;
             max-width: 420px; margin: 14px auto; padding: 12px; }
-    .card img { width: 100%; max-width: 360px; border-radius: 10px; background: #15140f; image-rendering: auto; }
-    .label { font-size: 14px; margin-top: 8px; }
+    .card img { width: 100%; max-width: 320px; border-radius: 10px; background: #15140f; image-rendering: auto; }
+    .label { font-size: 15px; margin-top: 8px; font-weight: 600; }
     .note { font-size: 12px; color: #8a93a6; margin-top: 2px; }
   </style>
 </head>
 <body>
   <h1>Erika — 3D → sprite previews</h1>
-  <div class="sub">rendered from the 3D model · transparent · grounded</div>
+  <div class="sub">bow attached · 3⁄4 front view · 30fps sampling · transparent + grounded</div>
 
   <div class="card">
-    <img src="erika_walk_side.gif?v=3" alt="Erika walk, side view" />
-    <div class="label">Walk — side view (in place)</div>
-    <div class="note">run clip · 24 frames · ~30fps</div>
+    <img src="erika_idle.gif?v=4" alt="Erika idle" />
+    <div class="label">Idle</div>
+    <div class="note">idle.glb · loop · bow at side</div>
   </div>
 
   <div class="card">
-    <img src="erika_shoot.gif?v=3" alt="Erika shoot" />
-    <div class="label">Bow shoot</div>
-    <div class="note">24 frames · note: no bow in hand yet (Blender attach next)</div>
+    <img src="erika_walk.gif?v=4" alt="Erika walk" />
+    <div class="label">Walk / Move</div>
+    <div class="note">run.glb · loop · in place</div>
+  </div>
+
+  <div class="card">
+    <img src="erika_shoot.gif?v=4" alt="Erika shoot" />
+    <div class="label">Shoot</div>
+    <div class="note">bow_shoot.glb · full clip (will be trimmed to the draw→release core for in-game)</div>
   </div>
 </body>
 </html>
