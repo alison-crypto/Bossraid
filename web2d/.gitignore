@@ -13,3 +13,5 @@ previews/*
 !previews/erika_shoot_side.gif
 !previews/archer/
 !previews/archer/*.gif
+!previews/cmp/
+!previews/cmp/*.gif
