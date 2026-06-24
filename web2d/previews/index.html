@@ -3,24 +3,46 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bossraid — Erika render previews</title>
+  <title>Bossraid — Erika archer animation set</title>
   <style>
-    body { margin: 0; background: #0b0b10; color: #e7ecf5; font-family: system-ui, sans-serif;
-           text-align: center; padding: 18px 12px 60px; }
-    h1 { font-size: 20px; font-weight: 600; margin: 6px 0 2px; }
-    .sub { color: #8a93a6; font-size: 13px; margin-bottom: 18px; }
-    .card { background: #15140f; border: 1px solid #2a2c36; border-radius: 14px;
-            max-width: 420px; margin: 14px auto; padding: 12px; }
-    .card img { width: 100%; max-width: 320px; border-radius: 10px; background: #15140f; image-rendering: auto; }
-    .label { font-size: 15px; margin-top: 8px; font-weight: 600; }
-    .note { font-size: 12px; color: #8a93a6; margin-top: 2px; }
+    body { margin: 0; background: #0b0b10; color: #e7ecf5; font-family: system-ui, sans-serif; text-align: center; padding: 16px 10px 60px; }
+    h1 { font-size: 19px; font-weight: 600; margin: 4px 0 2px; }
+    .sub { color: #8a93a6; font-size: 12px; margin-bottom: 14px; }
+    .sec { font-size: 12px; color: #c7a96b; letter-spacing: .08em; text-transform: uppercase; margin: 22px 0 6px; border-top: 1px solid #2a2c36; padding-top: 12px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; max-width: 760px; margin: 0 auto; }
+    .card { background: #15140f; border: 1px solid #2a2c36; border-radius: 12px; padding: 8px; }
+    .card img { width: 100%; border-radius: 8px; background: #15140f; }
+    .label { font-size: 13px; margin-top: 6px; font-weight: 600; }
   </style>
 </head>
 <body>
-  <h1>Erika — Mixamo Longbow pack (proper archer motion)</h1>
-  <div class="sub">real bow animations · arms posed for archery · bow stays a separate swappable item</div>
-  <div class="card"><img src="erika_idle.gif?v=10" alt="idle" /><div class="label">Idle</div><div class="note">standing bow idle 01</div></div>
-  <div class="card"><img src="erika_walk.gif?v=10" alt="walk" /><div class="label">Move (aim-walk)</div><div class="note">walks forward while aiming — combat archer</div></div>
-  <div class="card"><img src="erika_shoot.gif?v=10" alt="shoot" /><div class="label">Draw / Shoot</div><div class="note">standing draw arrow</div></div>
+  <h1>Erika &mdash; full archer set (17 clips)</h1>
+  <div class="sub">your Mixamo library &middot; FBX-direct &middot; bow hip-locked (swappable) &middot; side view &middot; 24f</div>
+  <div class="sec">Locomotion</div>
+  <div class="grid">
+    <div class="card"><img src="archer/idle.gif?v=11"><div class="label">Idle</div></div>
+    <div class="card"><img src="archer/idle_aim.gif?v=11"><div class="label">Idle (aiming)</div></div>
+    <div class="card"><img src="archer/walk.gif?v=11"><div class="label">Walk (aim fwd)</div></div>
+    <div class="card"><img src="archer/walk_back.gif?v=11"><div class="label">Walk back</div></div>
+    <div class="card"><img src="archer/strafe_left.gif?v=11"><div class="label">Strafe left</div></div>
+    <div class="card"><img src="archer/strafe_right.gif?v=11"><div class="label">Strafe right</div></div>
+    <div class="card"><img src="archer/run.gif?v=11"><div class="label">Run</div></div>
+  </div>
+  <div class="sec">Combat</div>
+  <div class="grid">
+    <div class="card"><img src="archer/draw.gif?v=11"><div class="label">Draw</div></div>
+    <div class="card"><img src="archer/shoot.gif?v=11"><div class="label">Shoot (recoil)</div></div>
+    <div class="card"><img src="archer/overdraw.gif?v=11"><div class="label">Overdraw (charge)</div></div>
+    <div class="card"><img src="archer/equip.gif?v=11"><div class="label">Equip bow</div></div>
+  </div>
+  <div class="sec">Defense &amp; Reactions</div>
+  <div class="grid">
+    <div class="card"><img src="archer/dodge_left.gif?v=11"><div class="label">Dodge left</div></div>
+    <div class="card"><img src="archer/dodge_right.gif?v=11"><div class="label">Dodge right</div></div>
+    <div class="card"><img src="archer/dodge_back.gif?v=11"><div class="label">Dodge back</div></div>
+    <div class="card"><img src="archer/roll.gif?v=11"><div class="label">Dive roll</div></div>
+    <div class="card"><img src="archer/hit.gif?v=11"><div class="label">Hit reaction</div></div>
+    <div class="card"><img src="archer/death.gif?v=11"><div class="label">Death</div></div>
+  </div>
 </body>
 </html>
