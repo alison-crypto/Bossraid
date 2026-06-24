@@ -48,13 +48,20 @@
       const key = new THREE.DirectionalLight(0xfff2e0, 2.4); key.position.set(-4, 7, 5); scene.add(key);
       const rim = new THREE.DirectionalLight(0x88aaff, 0.7); rim.position.set(4, 3, -5); scene.add(rim);
 
-      const gltf = await parseGlb(opts.charB64);
-      const model = gltf.scene;
+      // character: from FBX (e.g. "Erika Archer With Bow Arrow" — bow built into the
+      // rig) or from GLB. FBX path lets us A/B the built-in bow vs our attachment.
+      let gltf = null, model;
+      if (opts.charFbxB64) { model = fbxLoader.parse(b64ToBuf(opts.charFbxB64), ""); }
+      else { gltf = await parseGlb(opts.charB64); model = gltf.scene; }
       scene.add(model);
       // Skinned meshes are frustum-culled by their BIND-pose bounds; root-motion
       // clips push the animated mesh out of that sphere and it vanishes. Disable
       // culling so it always renders.
       model.traverse((o) => { if (o.isMesh || o.isSkinnedMesh) o.frustumCulled = false; });
+      // optional: replace materials with a neutral matte so an FBX char (whose
+      // embedded textures may not load -> renders black) is clearly visible. The
+      // bow protrudes, so its shape/orientation reads even at one flat colour.
+      if (opts.flatMat) model.traverse((o) => { if (o.isMesh || o.isSkinnedMesh) o.material = new THREE.MeshStandardMaterial({ color: 0xc2c7d0, roughness: 0.65, metalness: 0.0 }); });
 
       // normalize: height -> 1 unit, centered on X/Z, feet at y=0
       let box = new THREE.Box3().setFromObject(model);
@@ -127,7 +134,7 @@
         for (const t of clip.tracks) if (/\.position$/.test(t.name)) for (let i = 0; i < t.values.length; i++) t.values[i] *= ps;
       }
       else if (opts.animB64) { const a = await parseGlb(opts.animB64); clip = a.animations[0]; }
-      else if (gltf.animations?.length) clip = opts.clipName ? gltf.animations.find((c) => c.name === opts.clipName) : gltf.animations[0];
+      else if (gltf?.animations?.length) clip = opts.clipName ? gltf.animations.find((c) => c.name === opts.clipName) : gltf.animations[0];
       const mixer = clip ? new THREE.AnimationMixer(model) : null;
       let duration = 0;
       if (mixer && clip) { mixer.clipAction(clip).play(); duration = clip.duration; }
