@@ -245,6 +245,17 @@ var slam_ring: MeshInstance3D
 var slam_mat: StandardMaterial3D
 var slam_target := Vector3.ZERO
 
+# --- run scoring (C9-style graded clears) ---
+var run_t := 0.0          # seconds of active fight
+var run_dmg := 0.0        # total damage taken this run
+var run_dodges := 0       # dodges used
+var run_deflect_ok := 0   # hits negated by a deflect
+var run_scored := false   # results already shown for this kill
+var results_layer: CanvasLayer
+var boss_warn: ColorRect  # red screen flash on un-interruptible boss windups
+var dodge_aura: MeshInstance3D   # blue i-frame aura
+var deflect_aura: MeshInstance3D # white deflect aura
+
 # Attacks
 var melee_cd := 0.0
 var locked_clip := ""    # the clip the current swing is locked on (hit lands when it finishes)
@@ -477,6 +488,13 @@ func _build_player(pos: Vector3) -> void:
 	if not (OS.has_feature("web") or OS.has_feature("mobile")):
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
+	# Defensive auras: a translucent capsule that flashes during i-frame windows so
+	# the player can READ their defense (blue = dodge i-frames, white = deflect).
+	dodge_aura = _make_aura(Color(0.3, 0.6, 1.0))
+	deflect_aura = _make_aura(Color(1.0, 1.0, 1.0))
+	player.add_child(dodge_aura)
+	player.add_child(deflect_aura)
+
 
 func _build_hud() -> void:
 	var layer := CanvasLayer.new()
@@ -485,6 +503,15 @@ func _build_hud() -> void:
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(root)
+
+	# Danger flash: a red full-screen tint that pulses during un-interruptible boss
+	# windups (added first so it sits behind the rest of the HUD).
+	boss_warn = ColorRect.new()
+	boss_warn.set_anchors_preset(Control.PRESET_FULL_RECT)
+	boss_warn.color = Color(1, 0.1, 0.1, 0.0)
+	boss_warn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	boss_warn.visible = false
+	root.add_child(boss_warn)
 
 	# Player HP (top-left).
 	root.add_child(_rect(Color(0, 0, 0, 0.5), Vector2(24, 24), Vector2(300, 24)))
@@ -602,6 +629,10 @@ func _touch_btn(root: Control, label: String, frac: Rect2, cb: Callable) -> void
 # Raw multitouch: each touch is the joystick (left side) or a button tap. Aiming is
 # automatic, so there's no look control to conflict with — both thumbs work at once.
 func _input(event: InputEvent) -> void:
+	# Results screen up: any tap continues (Control buttons don't get touch taps
+	# since mouse-from-touch emulation is off for the multitouch game controls).
+	if results_layer and event is InputEventScreenTouch and event.pressed:
+		_continue_run(); return
 	if not touch_enabled:
 		return
 	var vp := get_viewport().get_visible_rect().size
@@ -1153,6 +1184,9 @@ func _physics_process(delta: float) -> void:
 			weapon.position = weapon_offset / s
 			weapon_scaled = true
 
+	if not boss_dead and not player_dead:
+		run_t += delta
+	_update_auras()
 	_update_boss(delta)
 	_update_combat(delta)
 	_update_hud()
@@ -1426,6 +1460,8 @@ func _update_rocks(delta: float) -> void:
 
 func _damage_player(dmg: int) -> void:
 	if player_invuln > 0.0 or player_dead:
+		if deflect_t > 0.0:
+			run_deflect_ok += 1 # a hit landed inside the deflect window -> negated
 		return
 	if blocking:
 		if block_t <= parry_window:
@@ -1436,6 +1472,7 @@ func _damage_player(dmg: int) -> void:
 		dmg = int(round(dmg * block_reduction)) # blocked: chip damage only
 	var taken: int = max(0, dmg - player_def) # equipment defence subtracts directly
 	player_hp = max(0.0, player_hp - taken)
+	run_dmg += taken # track for the run grade
 	player_invuln = 0.7
 	if is_archer:
 		special = min(1.0, special + SPECIAL_GAIN_TAKEN) # taking hits also builds the meter
@@ -1467,22 +1504,114 @@ func _hit_boss(dmg: int) -> void:
 		_boss_die()
 
 
+# Grade a clear from how cleanly it was won. Returns {grade, keys, score}.
+func _grade_run() -> Dictionary:
+	var dmg_frac: float = run_dmg / max(1.0, player_max)   # total damage taken / max HP
+	var time_pen: float = clampf((run_t - 35.0) / 60.0, 0.0, 1.0) # over ~35s starts costing
+	var score: float = clampf(100.0 - dmg_frac * 70.0 - time_pen * 35.0 + float(run_deflect_ok) * 4.0, 0.0, 100.0)
+	var grade := "BAD"; var keys := 1
+	if run_dmg <= 0.0: grade = "PERFECT"; keys = 4
+	elif score >= 80.0: grade = "EXCELLENT"; keys = 3
+	elif score >= 55.0: grade = "GOOD"; keys = 2
+	elif score >= 30.0: grade = "NORMAL"; keys = 1
+	else: grade = "BAD"; keys = 1
+	return {"grade": grade, "keys": keys, "score": int(score)}
+
+
 func _boss_die() -> void:
+	if run_scored:
+		return
+	run_scored = true
 	boss_dead = true
 	boss_root.visible = false
 	slam_ring.visible = false
 	GameState.grant_boss_reward()
-	var drop: Dictionary = GameState.roll_loot()
-	_banner("VICTORY!   LOOT: %s   (+%d SP)" % [String(drop.get("name", "?")), GameState.SP_PER_BOSS])
+	var res := _grade_run()
+	# Better play -> more loot keys -> more rolls.
+	var loot := []
+	for i in int(res.keys):
+		loot.append(String(GameState.roll_loot().get("name", "?")))
 	if menu:
 		menu.refresh()
-	await get_tree().create_timer(2.5).timeout
+	_show_results(res, loot)
+
+
+func _continue_run() -> void:
+	if results_layer:
+		results_layer.queue_free(); results_layer = null
 	boss_hp = BOSS_MAX
 	boss_dead = false
 	boss_state = "idle"
+	boss_phase = 1
 	boss_cd = 3.0
 	boss_root.global_position = boss_pos
 	boss_root.visible = true
+	# reset the run score for the next clear
+	run_t = 0.0; run_dmg = 0.0; run_dodges = 0; run_deflect_ok = 0; run_scored = false
+	player_hp = player_max
+	special = 0.0
+
+
+# C9-style results screen: big grade, run stats, loot from the keys, CONTINUE.
+func _show_results(res: Dictionary, loot: Array) -> void:
+	if results_layer:
+		results_layer.queue_free()
+	results_layer = CanvasLayer.new(); results_layer.layer = 20
+	add_child(results_layer)
+	var dim := ColorRect.new()
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT); dim.color = Color(0, 0, 0, 0.6)
+	results_layer.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	results_layer.add_child(center)
+	var box := VBoxContainer.new()
+	box.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_theme_constant_override("separation", 14)
+	center.add_child(box)
+	var grade_col := {"PERFECT": Color(1, 0.85, 0.3), "EXCELLENT": Color(0.5, 1, 0.6), "GOOD": Color(0.5, 0.85, 1), "NORMAL": Color(0.85, 0.85, 0.9), "BAD": Color(0.9, 0.5, 0.4)}
+	var t := Label.new(); t.text = "VICTORY"; t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	t.add_theme_font_size_override("font_size", 34); box.add_child(t)
+	var g := Label.new(); g.text = String(res.grade); g.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	g.add_theme_font_size_override("font_size", 64); g.modulate = grade_col.get(res.grade, Color.WHITE); box.add_child(g)
+	var stats := Label.new(); stats.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	stats.add_theme_font_size_override("font_size", 20)
+	stats.text = "Time %.0fs   Damage taken %d   Deflects %d\nScore %d   →   %d Keys" % [run_t, int(run_dmg), run_deflect_ok, int(res.score), int(res.keys)]
+	box.add_child(stats)
+	var lt := Label.new(); lt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lt.add_theme_font_size_override("font_size", 18); lt.modulate = Color(1, 0.9, 0.6)
+	lt.text = "Loot: " + (", ".join(loot) if loot.size() > 0 else "—"); box.add_child(lt)
+	var lvl := Label.new(); lvl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lvl.add_theme_font_size_override("font_size", 16); lvl.modulate = Color(0.8, 0.85, 0.95)
+	lvl.text = "Level %d   ·   +%d SP" % [GameState.level, GameState.SP_PER_BOSS]; box.add_child(lvl)
+	var btn := Button.new(); btn.text = "CONTINUE"; btn.custom_minimum_size = Vector2(220, 60)
+	btn.add_theme_font_size_override("font_size", 24); btn.focus_mode = Control.FOCUS_NONE
+	btn.pressed.connect(_continue_run); box.add_child(btn)
+
+
+# A translucent unshaded capsule used as a readable i-frame aura on the player.
+func _make_aura(c: Color) -> MeshInstance3D:
+	var m := MeshInstance3D.new()
+	var cap := CapsuleMesh.new(); cap.radius = 0.55; cap.height = 1.9
+	m.mesh = cap; m.position = Vector3(0, 0.95, 0)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(c.r, c.g, c.b, 0.25)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.emission_enabled = true; mat.emission = c
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.material_override = mat; m.visible = false
+	return m
+
+
+# Toggle the defensive auras + the boss-windup danger flash each frame.
+func _update_auras() -> void:
+	if dodge_aura: dodge_aura.visible = dodging
+	if deflect_aura: deflect_aura.visible = deflect_t > 0.0
+	if boss_warn:
+		var warn := (not boss_dead) and boss_state == "windup"
+		boss_warn.visible = warn
+		if warn:
+			boss_warn.color = Color(1.0, 0.1, 0.1, 0.10 + 0.10 * absf(sin(run_t * 14.0)))
 
 
 # --- Player attacks ---------------------------------------------------------
@@ -1646,6 +1775,7 @@ func _do_dodge() -> void:
 	if touch_move.length() > 0.15: # joystick direction on touch
 		d += rgt * touch_move.x - fwd * touch_move.y
 	dodge_dir = d.normalized() if d.length() > 0.1 else fwd
+	run_dodges += 1
 	dodging = true
 	dodge_t = DODGE_TIME
 	_cancel_swing() # dodge cancels any swing (active-frames rule)
