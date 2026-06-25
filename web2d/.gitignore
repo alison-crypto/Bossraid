@@ -29,3 +29,5 @@ previews/*
 !previews/tilt_mine.png
 !previews/tilt10_compare.png
 !previews/tilt10_mine.png
+!previews/depth_side.png
+!previews/depth_front.png
