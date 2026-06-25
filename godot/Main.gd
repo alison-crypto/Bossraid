@@ -508,7 +508,7 @@ func _build_player(pos: Vector3) -> void:
 
 	# Defensive auras: a translucent capsule that flashes during i-frame windows so
 	# the player can READ their defense (blue = dodge i-frames, white = deflect).
-	dodge_aura = _make_aura(Color(0.3, 0.6, 1.0))
+	dodge_aura = _make_dodge_ring() # flat ground ring, not a body-shell bubble
 	deflect_aura = _make_aura(Color(1.0, 1.0, 1.0))
 	player.add_child(dodge_aura)
 	player.add_child(deflect_aura)
@@ -1143,7 +1143,11 @@ func _physics_process(delta: float) -> void:
 	if aim_locked and not player_dead and _target_valid():
 		var tb := locked_target.global_position - player.global_position; tb.y = 0
 		if tb.length() > 0.5:
-			var rate := 0.12 if touch_enabled else 0.18
+			# Track the target tightly so it stays centred and the bow lines up on it.
+			# Snap near-instantly when standing still (rock-solid aim); ease while moving
+			# so strafing around the boss doesn't whip the camera.
+			var moving_now := touch_move.length() > 0.15 or Input.get_vector("move_left", "move_right", "move_up", "move_down").length() > 0.15
+			var rate := (0.30 if touch_enabled else 0.35) if moving_now else 0.6
 			yaw = lerp_angle(yaw, atan2(tb.x, tb.z) + PI, rate)
 	cam_yaw.rotation.y = yaw
 	cam_pitch.rotation.x = pitch
@@ -1214,7 +1218,10 @@ func _physics_process(delta: float) -> void:
 		else:
 			face_dir = fwd
 		var target := atan2(face_dir.x, face_dir.z) + (PI if face_flip else 0.0)
-		model_facing = lerp_angle(model_facing, target, 0.25)
+		# Snap harder when locked on so the bow stays pointed at the target; softer
+		# otherwise so free movement turns read smoothly.
+		var face_rate := 0.5 if (is_archer and aim_locked and not dodging and _target_valid()) else 0.25
+		model_facing = lerp_angle(model_facing, target, face_rate)
 		model.rotation.y = model_facing
 	# Animation state: swings/dodge play their own one-shots; otherwise the archer
 	# uses its dedicated state machine, else block pose / idle-run locomotion.
@@ -1766,6 +1773,24 @@ func _make_aura(c: Color) -> MeshInstance3D:
 	return m
 
 
+# Dodge i-frame read: a flat glowing ring at the feet (a dash sweep), NOT a body
+# bubble — reads as "dodging" without the odd shell around the character.
+func _make_dodge_ring() -> MeshInstance3D:
+	var m := MeshInstance3D.new()
+	var t := TorusMesh.new(); t.inner_radius = 0.5; t.outer_radius = 0.92; t.rings = 28; t.ring_segments = 18
+	m.mesh = t; m.position = Vector3(0, 0.06, 0) # TorusMesh is Y-aligned -> already lies flat on the ground
+	var mat := StandardMaterial3D.new()
+	# Alpha-blended saturated cyan (NOT additive — additive washes out on the bright
+	# sandy floor). Cyan contrasts the orange ground so the i-frame read stays clear.
+	mat.albedo_color = Color(0.15, 0.9, 1.0, 0.9)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.emission_enabled = true; mat.emission = Color(0.2, 0.8, 1.0); mat.emission_energy_multiplier = 1.6
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.material_override = mat; m.visible = false
+	return m
+
+
 # Toggle the defensive auras + the boss-windup danger flash each frame.
 func _update_auras() -> void:
 	if dodge_aura: dodge_aura.visible = dodging
@@ -1952,7 +1977,7 @@ func _do_dodge() -> void:
 			clip = a_roll
 	if clip != "" and anim and anim.has_animation(clip):
 		var ln: float = anim.get_animation(clip).length
-		var spd: float = clampf(ln / (DODGE_TIME + 0.15), 1.0, 6.0) # fit the dodge window
+		var spd: float = clampf(ln / (DODGE_TIME * 0.92), 1.0, 8.0) # play the FULL roll within the dodge window (don't cut it short)
 		anim.play(clip, 0.05, spd)
 		cur_anim = clip
 
