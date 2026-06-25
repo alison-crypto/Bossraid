@@ -133,6 +133,7 @@ var dodge_dir := Vector3.FORWARD
 # Archer (Erika) animation state. When `is_archer`, the player uses the dedicated
 # 3D-rendered archer clip set + state machine instead of the generic melee one.
 var is_archer := false
+var aim_mod: ArcherAimModifier # upper-body pitch so the bow tracks the target's height
 const AIM_HOLD_T := 0.52 # frame of the draw clip where the bow points dead at the target
 var a_idle := ""
 var a_aim := ""        # held aim/draw pose (draw clip frozen at AIM_HOLD_T)
@@ -778,6 +779,10 @@ func _setup_animation() -> void:
 		run_anim = a_run if a_run != "" else run_anim
 		dodge_anim = a_roll if a_roll != "" else dodge_anim
 		bowdraw_anim = a_aim if a_aim != "" else bowdraw_anim
+		# Upper-body 3D aim: pitches the spine after the anim so the bow tracks the
+		# target's height (the bow holds level otherwise -> misses airborne/tall bosses).
+		aim_mod = ArcherAimModifier.new()
+		skel.add_child(aim_mod)
 		print("Bossraid: archer clips idle=", a_idle, " aim=", a_aim, " run=", a_run, " shoot=", a_shoot, " roll=", a_roll)
 	if idle_anim == "" and list.size() > 0:
 		idle_anim = list[0]
@@ -1227,6 +1232,14 @@ func _physics_process(delta: float) -> void:
 		var face_rate := 0.5 if (is_archer and aim_locked and not dodging and _target_valid()) else 0.25
 		model_facing = lerp_angle(model_facing, target, face_rate)
 		model.rotation.y = model_facing
+	# Upper-body 3D aim: pitch the spine so the bow tracks the target's height. Only
+	# while actively aiming a locked target; eases in/out so it doesn't pop.
+	if aim_mod:
+		var want_aim := is_archer and aim_locked and aiming and not dodging and not player_dead and _target_valid()
+		aim_mod.enabled = want_aim or aim_mod.blend > 0.001
+		if want_aim:
+			aim_mod.aim_target = _aim_target_pos()
+		aim_mod.blend = move_toward(aim_mod.blend, 1.0 if want_aim else 0.0, delta * 6.0)
 	# Animation state: swings/dodge play their own one-shots; otherwise the archer
 	# uses its dedicated state machine, else block pose / idle-run locomotion.
 	if not attacking and not dodging:
@@ -2058,6 +2071,16 @@ func _target_valid() -> bool:
 func _aim_target_pos() -> Vector3:
 	if not _target_valid():
 		return player.global_position - cam.global_transform.basis.z
+	# Aim at the boss's CHEST bone, not root+2: the bone moves with the animation, so
+	# the bow + arrow track the boss when it leaps/slams (the root stays grounded).
+	if boss_skel:
+		var cb := boss_skel.find_bone("mixamorig_Spine2")
+		if cb < 0:
+			cb = boss_skel.find_bone("mixamorig_Spine1")
+		if cb < 0:
+			cb = boss_skel.find_bone("mixamorig_Spine")
+		if cb >= 0:
+			return (boss_skel.global_transform * boss_skel.get_bone_global_pose(cb)).origin
 	return locked_target.global_position + Vector3(0, 2.0, 0)
 
 
