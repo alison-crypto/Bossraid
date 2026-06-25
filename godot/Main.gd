@@ -251,7 +251,11 @@ var run_dmg := 0.0        # total damage taken this run
 var run_dodges := 0       # dodges used
 var run_deflect_ok := 0   # hits negated by a deflect
 var run_scored := false   # results already shown for this kill
+var current_floor := 0    # which SAO floor we're on (mastery buff is per-floor)
 var results_layer: CanvasLayer
+var result_buttons: Array = [] # results-screen tap targets: [{frac, cb}]
+var last_res := {}
+var last_loot: Array = []
 var boss_warn: ColorRect  # red screen flash on un-interruptible boss windups
 var dodge_aura: MeshInstance3D   # blue i-frame aura
 var deflect_aura: MeshInstance3D # white deflect aura
@@ -629,10 +633,14 @@ func _touch_btn(root: Control, label: String, frac: Rect2, cb: Callable) -> void
 # Raw multitouch: each touch is the joystick (left side) or a button tap. Aiming is
 # automatic, so there's no look control to conflict with — both thumbs work at once.
 func _input(event: InputEvent) -> void:
-	# Results screen up: any tap continues (Control buttons don't get touch taps
-	# since mouse-from-touch emulation is off for the multitouch game controls).
+	# Results screen up: hit-test its fraction-anchored buttons (Control buttons don't
+	# get touch taps since mouse-from-touch emulation is off for the game controls).
 	if results_layer and event is InputEventScreenTouch and event.pressed:
-		_continue_run(); return
+		var rf: Vector2 = event.position / get_viewport().get_visible_rect().size
+		for b in result_buttons:
+			if (b.frac as Rect2).has_point(rf):
+				(b.cb as Callable).call(); return
+		return
 	if not touch_enabled:
 		return
 	var vp := get_viewport().get_visible_rect().size
@@ -1495,11 +1503,13 @@ func _player_die() -> void:
 func _hit_boss(dmg: int) -> void:
 	if boss_dead:
 		return
+	# Per-floor mastery: +5% damage per prior clear of this floor (C9 proficiency).
+	dmg = int(round(dmg * (1.0 + 0.05 * GameState.floor_mastery(current_floor))))
 	boss_hp = max(0.0, boss_hp - dmg)
 	boss_flash = 0.12
 	_spawn_damage(boss_root.global_position + Vector3(0, 4.6, 0), dmg)
 	if is_archer:
-		special = min(1.0, special + SPECIAL_GAIN_HIT) # build the Arrow Storm meter
+		special = min(1.0, special + SPECIAL_GAIN_HIT * (1.0 + 0.15 * GameState.skill_rank("storm")))
 	if boss_hp <= 0.0:
 		_boss_die()
 
@@ -1526,6 +1536,7 @@ func _boss_die() -> void:
 	boss_root.visible = false
 	slam_ring.visible = false
 	GameState.grant_boss_reward()
+	GameState.add_floor_clear(current_floor) # per-floor mastery + autosave
 	var res := _grade_run()
 	# Better play -> more loot keys -> more rolls.
 	var loot := []
@@ -1533,6 +1544,7 @@ func _boss_die() -> void:
 		loot.append(String(GameState.roll_loot().get("name", "?")))
 	if menu:
 		menu.refresh()
+	last_res = res; last_loot = loot
 	_show_results(res, loot)
 
 
@@ -1552,41 +1564,77 @@ func _continue_run() -> void:
 	special = 0.0
 
 
-# C9-style results screen: big grade, run stats, loot from the keys, CONTINUE.
+# C9-style results screen: grade + run stats + loot, then a touch-friendly UPGRADE
+# panel (spend SP on archer-skill ranks, free respec) and CONTINUE. Buttons are
+# fraction-anchored so the raw-input tap hit-test (in _input) matches the visuals.
 func _show_results(res: Dictionary, loot: Array) -> void:
 	if results_layer:
 		results_layer.queue_free()
+	result_buttons = []
 	results_layer = CanvasLayer.new(); results_layer.layer = 20
 	add_child(results_layer)
 	var dim := ColorRect.new()
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT); dim.color = Color(0, 0, 0, 0.6)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT); dim.color = Color(0, 0, 0, 0.72)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	results_layer.add_child(dim)
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	results_layer.add_child(center)
-	var box := VBoxContainer.new()
-	box.alignment = BoxContainer.ALIGNMENT_CENTER
-	box.add_theme_constant_override("separation", 14)
-	center.add_child(box)
 	var grade_col := {"PERFECT": Color(1, 0.85, 0.3), "EXCELLENT": Color(0.5, 1, 0.6), "GOOD": Color(0.5, 0.85, 1), "NORMAL": Color(0.85, 0.85, 0.9), "BAD": Color(0.9, 0.5, 0.4)}
-	var t := Label.new(); t.text = "VICTORY"; t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	t.add_theme_font_size_override("font_size", 34); box.add_child(t)
-	var g := Label.new(); g.text = String(res.grade); g.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	g.add_theme_font_size_override("font_size", 64); g.modulate = grade_col.get(res.grade, Color.WHITE); box.add_child(g)
-	var stats := Label.new(); stats.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	stats.add_theme_font_size_override("font_size", 20)
-	stats.text = "Time %.0fs   Damage taken %d   Deflects %d\nScore %d   →   %d Keys" % [run_t, int(run_dmg), run_deflect_ok, int(res.score), int(res.keys)]
-	box.add_child(stats)
-	var lt := Label.new(); lt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lt.add_theme_font_size_override("font_size", 18); lt.modulate = Color(1, 0.9, 0.6)
-	lt.text = "Loot: " + (", ".join(loot) if loot.size() > 0 else "—"); box.add_child(lt)
-	var lvl := Label.new(); lvl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lvl.add_theme_font_size_override("font_size", 16); lvl.modulate = Color(0.8, 0.85, 0.95)
-	lvl.text = "Level %d   ·   +%d SP" % [GameState.level, GameState.SP_PER_BOSS]; box.add_child(lvl)
-	var btn := Button.new(); btn.text = "CONTINUE"; btn.custom_minimum_size = Vector2(220, 60)
-	btn.add_theme_font_size_override("font_size", 24); btn.focus_mode = Control.FOCUS_NONE
-	btn.pressed.connect(_continue_run); box.add_child(btn)
+	_res_label(res.grade, 0.5, 0.10, 60, grade_col.get(res.grade, Color.WHITE))
+	_res_label("Time %.0fs   ·   Damage %d   ·   Deflects %d   ·   %d Keys" % [run_t, int(run_dmg), run_deflect_ok, int(res.keys)], 0.5, 0.22, 20, Color(0.9, 0.9, 0.95))
+	_res_label("Loot: " + (", ".join(loot) if loot.size() > 0 else "—"), 0.5, 0.28, 18, Color(1, 0.9, 0.6))
+	_res_label("Lv %d   ·   Floor mastery x%d   ·   Skill Points: %d" % [GameState.level, GameState.floor_mastery(current_floor), GameState.skill_points], 0.5, 0.34, 20, Color(0.6, 0.95, 1))
+	# upgrade grid (2 cols x 3 rows)
+	var ids := ["spread", "volley", "explosive", "pierce", "deflect", "storm"]
+	for i in ids.size():
+		var id: String = ids[i]
+		var col := i % 2; var row := i / 2
+		var fx := 0.30 + col * 0.28
+		var fy := 0.42 + row * 0.11
+		var s: Dictionary = GameState.skills[id]
+		var maxed: bool = int(s["rank"]) >= int(s["max_rank"])
+		var lockd: bool = not GameState.level_ok(id)
+		var label := "%s  Lv%d/%d" % [String(s["name"]), int(s["rank"]), int(s["max_rank"])]
+		if lockd: label = "%s  (Lv%d)" % [String(s["name"]), int(s["req_level"])]
+		elif not maxed: label += "  [+]"
+		var can := GameState.can_afford(id) and not maxed
+		_res_button(label, Rect2(fx, fy, 0.26, 0.09), (func(): _upgrade(id)) if can else Callable(), can)
+	# respec + continue
+	_res_button("RESPEC (free)", Rect2(0.30, 0.77, 0.26, 0.08), func(): _respec(), GameState.skill_points >= 0)
+	_res_button("CONTINUE", Rect2(0.58, 0.77, 0.26, 0.08), func(): _continue_run(), true)
+
+
+func _res_label(text: String, fx: float, fy: float, size: int, col: Color) -> void:
+	var l := Label.new()
+	l.text = text; l.add_theme_font_size_override("font_size", size); l.modulate = col
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER; l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.anchor_left = fx - 0.45; l.anchor_right = fx + 0.45; l.anchor_top = fy; l.anchor_bottom = fy
+	l.offset_left = 0; l.offset_right = 0; l.offset_top = -22; l.offset_bottom = 22
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	results_layer.add_child(l)
+
+
+func _res_button(label: String, frac: Rect2, cb: Callable, enabled: bool) -> void:
+	var p := Panel.new()
+	p.anchor_left = frac.position.x; p.anchor_top = frac.position.y
+	p.anchor_right = frac.position.x + frac.size.x; p.anchor_bottom = frac.position.y + frac.size.y
+	p.offset_left = 0; p.offset_top = 0; p.offset_right = 0; p.offset_bottom = 0
+	p.modulate = Color(1, 1, 1, 0.85) if enabled else Color(0.5, 0.5, 0.55, 0.6)
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var l := Label.new(); l.text = label; l.set_anchors_preset(Control.PRESET_FULL_RECT)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER; l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.add_theme_font_size_override("font_size", 20)
+	p.add_child(l); results_layer.add_child(p)
+	if enabled and cb.is_valid():
+		result_buttons.append({"frac": frac, "cb": cb})
+
+
+func _upgrade(id: String) -> void:
+	if GameState.unlock_or_rank(id):
+		_show_results(last_res, last_loot) # refresh the panel with new ranks/SP
+
+
+func _respec() -> void:
+	GameState.respec()
+	_show_results(last_res, last_loot)
 
 
 # A translucent unshaded capsule used as a readable i-frame aura on the player.
@@ -1896,7 +1944,8 @@ func _shot_spread() -> void:
 		return
 	ranged_cd = RANGED_CD * 1.3; _play_shoot()
 	stamina -= STA_SPREAD; sta_regen_t = STA_REGEN_DELAY
-	var n := SPREAD_COUNT; var step := SPREAD_ARC / float(max(1, n - 1))
+	var n := SPREAD_COUNT + GameState.skill_rank("spread") # +1 arrow / rank
+	var step := SPREAD_ARC / float(max(1, n - 1))
 	for k in n:
 		_fire_arrow((k - (n - 1) / 2.0) * step, 1.0, 1.0, false, false)
 
@@ -1905,8 +1954,9 @@ func _shot_spread() -> void:
 func _skill_volley() -> void:
 	if cd_volley > 0.0 or player_dead:
 		return
-	cd_volley = CD_VOLLEY; _play_shoot()
-	var n := VOLLEY_COUNT
+	var vr := GameState.skill_rank("volley")
+	cd_volley = CD_VOLLEY * (1.0 - 0.1 * vr); _play_shoot()
+	var n := VOLLEY_COUNT + vr
 	for k in n:
 		_fire_arrow((k - (n - 1) / 2.0) * VOLLEY_ARC, 0.7, 1.0, false, false)
 
@@ -1924,15 +1974,16 @@ func _skill_pierce() -> void:
 	if cd_pierce > 0.0 or player_dead:
 		return
 	cd_pierce = CD_PIERCE; _play_shoot()
-	_fire_arrow(0.0, PIERCE_MULT, 1.3, false, true)
+	_fire_arrow(0.0, PIERCE_MULT + 0.3 * GameState.skill_rank("pierce"), 1.3, false, true)
 
 
 # Deflect — brief reflect window + i-frames (Q).
 func _skill_deflect() -> void:
 	if cd_deflect > 0.0 or player_dead:
 		return
-	cd_deflect = CD_DEFLECT; deflect_t = DEFLECT_TIME
-	player_invuln = max(player_invuln, DEFLECT_TIME)
+	var dt := DEFLECT_TIME + 0.05 * GameState.skill_rank("deflect")
+	cd_deflect = CD_DEFLECT; deflect_t = dt
+	player_invuln = max(player_invuln, dt)
 
 
 # Arrow Storm — needs a full special meter (X).
@@ -1940,7 +1991,7 @@ func _special_storm() -> void:
 	if cd_storm > 0.0 or special < 1.0 or player_dead:
 		return
 	cd_storm = CD_STORM; special = 0.0; _play_shoot()
-	var n := STORM_COUNT
+	var n := STORM_COUNT + 2 * GameState.skill_rank("storm")
 	for k in n:
 		_fire_arrow((k - (n - 1) / 2.0) * 0.06, 1.0, 1.0 + 0.015 * k, false, false)
 
@@ -1959,12 +2010,16 @@ func _archer_key(kc: int) -> bool:
 	return false
 
 
-# AoE blast: damage targets near `pos` + a quick expanding flash.
+# AoE blast: damage targets near `pos` + a quick expanding flash. Scales with the
+# Explosive Arrow skill rank.
 func _explode(pos: Vector3) -> void:
-	if not boss_dead and boss_root and boss_root.global_position.distance_to(pos) < EXPLOSIVE_R + 1.5:
-		_hit_boss(EXPLOSIVE_DMG)
-	if dummy_pos.distance_to(pos) < EXPLOSIVE_R:
-		_hit_dummy(EXPLOSIVE_DMG)
+	var er := GameState.skill_rank("explosive")
+	var rad := EXPLOSIVE_R + 0.4 * er
+	var dmg := int(round(EXPLOSIVE_DMG * (1.0 + 0.25 * er)))
+	if not boss_dead and boss_root and boss_root.global_position.distance_to(pos) < rad + 1.5:
+		_hit_boss(dmg)
+	if dummy_pos.distance_to(pos) < rad:
+		_hit_dummy(dmg)
 	var s := MeshInstance3D.new()
 	var sm := SphereMesh.new(); sm.radius = 0.35; sm.height = 0.7; s.mesh = sm
 	var mat := StandardMaterial3D.new()
@@ -1973,7 +2028,7 @@ func _explode(pos: Vector3) -> void:
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	s.material_override = mat; add_child(s); s.global_position = pos
 	var tw := create_tween(); tw.set_parallel(true)
-	tw.tween_property(s, "scale", Vector3.ONE * (EXPLOSIVE_R / 0.35), 0.3)
+	tw.tween_property(s, "scale", Vector3.ONE * (rad / 0.35), 0.3)
 	tw.tween_property(mat, "albedo_color:a", 0.0, 0.3)
 	tw.chain().tween_callback(s.queue_free)
 
