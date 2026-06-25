@@ -3,10 +3,9 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://djwtq85or8mgf"
-path.s3tc="res://.godot/imported/Pumpkin_pumpkinHulk_diffuse.png-75ad65d1f258ba8541ffba0dc9aef746.s3tc.ctex"
+path="res://.godot/imported/Pumpkin_pumpkinHulk_diffuse.png-75ad65d1f258ba8541ffba0dc9aef746.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
-"vram_texture": true
+"vram_texture": false
 }
 generator_parameters={
 "md5": "e35b5d7ae5fc0d818a5961f778c16b1e"
@@ -15,11 +14,11 @@ generator_parameters={
 [deps]
 
 source_file="res://models/Pumpkin_pumpkinHulk_diffuse.png"
-dest_files=["res://.godot/imported/Pumpkin_pumpkinHulk_diffuse.png-75ad65d1f258ba8541ffba0dc9aef746.s3tc.ctex"]
+dest_files=["res://.godot/imported/Pumpkin_pumpkinHulk_diffuse.png-75ad65d1f258ba8541ffba0dc9aef746.ctex"]
 
 [params]
 
-compress/mode=2
+compress/mode=0
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
