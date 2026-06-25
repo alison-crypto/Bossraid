@@ -1,0 +1,7 @@
+# Godot generated import cache (regenerated on open; never commit)
+.godot/
+
+# local test scaffolds (Phase-1 verification harnesses)
+test_*.gd
+test_*.gd.uid
+test_*.tscn
