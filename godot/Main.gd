@@ -377,17 +377,15 @@ func _build_boss(pos: Vector3) -> void:
 	boss_root = Node3D.new()
 	add_child(boss_root)
 	boss_root.position = pos
-	var scene := load("res://models/Golem.glb")
+	# Boss = PumpkinHulk: a clean Mixamo-rigged brute (the golem's rest skeleton is
+	# degenerate -> deforms; parked for a re-rig). Pumpkin self-textures and has a
+	# proper rest, so no golem texture/scale hacks — _scale_boss_to/_ground_boss use
+	# the skeleton (robust on any rig). The boss MECHANICS are model-agnostic.
+	var scene := load("res://models/Pumpkin.glb")
 	if scene:
 		boss_model = scene.instantiate()
 		boss_root.add_child(boss_model)
-		# Same converted-axis model as the heroes, so it faces movement with no
-		# flip; boss_root already aims it at the player (see _update_boss).
 		boss_mat = null # multi-material model: skip the tint flash
-		_texture_golem(boss_model) # per-surface PBR, applied in-engine (not Blender)
-		# NOTE: scaling happens AFTER the native anim is applied (_scale_boss_to) —
-		# this glb's REST skeleton is degenerate (Blender texture re-export), so
-		# AnimUtil.fit_height's rest-pose measure produces a ~172x runaway scale.
 		boss_anim = AnimUtil.find_anim_player(boss_model)
 		var bsk := AnimUtil.find_skeleton(boss_model)
 		if boss_anim and bsk:
