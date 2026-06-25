@@ -90,6 +90,22 @@ var attack_kind := "light" # "light" | "heavy" | "kick" — drives the damage fo
 var dodging := false
 var dodge_t := 0.0
 var dodge_dir := Vector3.FORWARD
+# Archer (Erika) animation state. When `is_archer`, the player uses the dedicated
+# 3D-rendered archer clip set + state machine instead of the generic melee one.
+var is_archer := false
+var a_idle := ""
+var a_aim := ""        # held aim/draw pose
+var a_run := ""
+var a_walk := ""
+var a_walk_back := ""  # aiming + moving backward
+var a_strafe_l := ""
+var a_strafe_r := ""
+var a_shoot := ""      # release one-shot
+var a_roll := ""       # dodge
+var a_hit := ""        # flinch one-shot
+var a_death := ""
+var shoot_t := 0.0     # seconds left on the shoot one-shot
+var player_hit_t := 0.0 # seconds left on the hit flinch
 var blocking := false
 var block_t := 0.0      # seconds the current block has been held (for parry window)
 var aiming := false
@@ -442,8 +458,12 @@ func _setup_animation() -> void:
 		if aps.size() > 0:
 			anim = aps[0]
 	if anim == null:
-		push_warning("Bossraid: no AnimationPlayer found on character")
-		return
+		# Character ships without animations (e.g. Erika is just a rigged T-pose +
+		# bow). Create a player so we can retarget external Mixamo clips onto it.
+		anim = AnimationPlayer.new()
+		model.add_child(anim)
+		anim.root_node = anim.get_path_to(model)
+		print("Bossraid: created AnimationPlayer for clip-less character")
 	var list := anim.get_animation_list()
 	print("Bossraid: character animations = ", list)
 	idle_anim = _match_anim(list, ["idle"])
@@ -475,6 +495,32 @@ func _setup_animation() -> void:
 			attack_anim = m_slash
 		attack_anim2 = m_slash2 if m_slash2 != "" else attack_anim
 		print("Bossraid: merged idle=", m_idle, " run=", m_run, " slash=", m_slash, " slashB=", m_slash2, " dodge=", dodge_anim)
+	# Archer (Erika): wire the dedicated 3D-rendered archer clip set. These drive a
+	# bespoke state machine (_archer_anim) — idle/aim/locomotion/strafe/shoot/roll.
+	is_archer = bow_node != null
+	if is_archer and skel:
+		const AD := "res://models/anim/archer/"
+		a_idle      = AnimUtil.merge(anim, skel, AD + "idle.fbx", "AIdle")
+		a_aim       = AnimUtil.merge(anim, skel, AD + "idle_aim.fbx", "AAim")
+		a_run       = AnimUtil.merge(anim, skel, AD + "run.fbx", "ARun")
+		a_walk      = AnimUtil.merge(anim, skel, AD + "walk.fbx", "AWalk")
+		a_walk_back = AnimUtil.merge(anim, skel, AD + "walk_back.fbx", "AWalkBack")
+		a_strafe_l  = AnimUtil.merge(anim, skel, AD + "strafe_left.fbx", "AStrafeL")
+		a_strafe_r  = AnimUtil.merge(anim, skel, AD + "strafe_right.fbx", "AStrafeR")
+		a_shoot     = AnimUtil.merge(anim, skel, AD + "shoot.fbx", "AShoot")
+		a_roll      = AnimUtil.merge(anim, skel, AD + "roll.fbx", "ARoll")
+		a_hit       = AnimUtil.merge(anim, skel, AD + "hit.fbx", "AHit")
+		a_death     = AnimUtil.merge(anim, skel, AD + "death.fbx", "ADeath")
+		for n in [a_idle, a_aim, a_run, a_walk, a_walk_back, a_strafe_l, a_strafe_r]:
+			_set_loop(n, true)
+		for n in [a_shoot, a_roll, a_hit, a_death]:
+			_set_loop(n, false)
+		# route the generic hooks to archer clips so shared systems just work
+		idle_anim = a_idle if a_idle != "" else idle_anim
+		run_anim = a_run if a_run != "" else run_anim
+		dodge_anim = a_roll if a_roll != "" else dodge_anim
+		bowdraw_anim = a_aim if a_aim != "" else bowdraw_anim
+		print("Bossraid: archer clips idle=", a_idle, " aim=", a_aim, " run=", a_run, " shoot=", a_shoot, " roll=", a_roll)
 	if idle_anim == "" and list.size() > 0:
 		idle_anim = list[0]
 	if run_anim == "":
@@ -735,6 +781,36 @@ func _play(anim_name: String) -> void:
 		cur_anim = anim_name
 
 
+# Archer state machine. Priority: death > flinch > shoot one-shot > aim (strafe/
+# back/hold) > locomotion (run/walk) > idle. (dodge/roll is handled by the dodge
+# system playing dodge_anim.)
+func _archer_anim(dir: Vector3, fwd: Vector3, rgt: Vector3) -> void:
+	if player_dead:
+		_play(a_death); return
+	if player_hit_t > 0.0 and a_hit != "":
+		_play(a_hit); return
+	if shoot_t > 0.0 and a_shoot != "":
+		_play(a_shoot); return
+	var moving := dir.length() > 0.1
+	if aiming:
+		if moving:
+			var fdot := dir.dot(fwd)
+			var rdot := dir.dot(rgt)
+			if absf(rdot) > absf(fdot) + 0.15 and (a_strafe_l != "" or a_strafe_r != ""):
+				_play(a_strafe_r if rdot > 0.0 else a_strafe_l)
+			elif fdot < -0.2 and a_walk_back != "":
+				_play(a_walk_back)
+			else:
+				_play(a_aim)
+		else:
+			_play(a_aim)
+	elif moving:
+		var sprint := Input.is_physical_key_pressed(KEY_SHIFT)
+		_play(a_run if (sprint and a_run != "") else (a_walk if a_walk != "" else a_run))
+	else:
+		_play(a_idle)
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
 		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
@@ -825,14 +901,24 @@ func _physics_process(delta: float) -> void:
 	# the character keeps its back to the camera instead of snapping to its rest
 	# orientation). face_flip aligns the model's forward with this (rig-dependent).
 	if model:
-		var face_dir := dodge_dir if dodging else (dir if dir.length() > 0.1 else fwd)
+		var face_dir: Vector3
+		if dodging:
+			face_dir = dodge_dir
+		elif is_archer and aiming:
+			face_dir = fwd # face the aim/camera direction so strafes read correctly
+		elif dir.length() > 0.1:
+			face_dir = dir
+		else:
+			face_dir = fwd
 		var target := atan2(face_dir.x, face_dir.z) + (PI if face_flip else 0.0)
 		model_facing = lerp_angle(model_facing, target, 0.2)
 		model.rotation.y = model_facing
-	# Animation state: swings/dodge play their own one-shots; otherwise block
-	# pose (if holding block) or idle/run locomotion.
+	# Animation state: swings/dodge play their own one-shots; otherwise the archer
+	# uses its dedicated state machine, else block pose / idle-run locomotion.
 	if not attacking and not dodging:
-		if aiming and bowdraw_anim != "" and GameState.weapon_data().get("ranged", false):
+		if is_archer:
+			_archer_anim(dir, fwd, rgt)
+		elif aiming and bowdraw_anim != "" and GameState.weapon_data().get("ranged", false):
 			_play(bowdraw_anim) # draw/hold the bow while aiming
 		elif blocking and block_anim != "":
 			_play(block_anim)
@@ -1002,6 +1088,8 @@ func _damage_player(dmg: int) -> void:
 	player_invuln = 0.7
 	if player_hp <= 0.0:
 		_player_die()
+	elif is_archer and a_hit != "" and anim and anim.has_animation(a_hit):
+		player_hit_t = minf(0.5, anim.get_animation(a_hit).length) # brief flinch
 
 
 func _player_die() -> void:
@@ -1241,6 +1329,8 @@ func _do_ranged() -> void:
 	if attacking:
 		_cancel_swing() # a shot cancels an in-progress swing
 	ranged_cd = RANGED_CD
+	if is_archer and a_shoot != "" and anim and anim.has_animation(a_shoot):
+		shoot_t = anim.get_animation(a_shoot).length # play the release one-shot
 	# Arrow physics: mass from STR (draw weight), launch speed from DEX (+ skill).
 	var mass := _arrow_mass()
 	var v0 := _arrow_v0()
@@ -1274,6 +1364,8 @@ func _do_ranged() -> void:
 func _update_combat(delta: float) -> void:
 	melee_cd = max(0.0, melee_cd - delta)
 	ranged_cd = max(0.0, ranged_cd - delta)
+	shoot_t = max(0.0, shoot_t - delta)       # archer release one-shot timer
+	player_hit_t = max(0.0, player_hit_t - delta) # archer flinch timer
 
 	# The hit resolves on _on_anim_finished (swing complete). Safety net: if that
 	# signal is ever missed, land the hit and release once the swing's full
