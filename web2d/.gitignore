@@ -17,3 +17,6 @@ previews/*
 !previews/cmp/*.gif
 !previews/skinned_bow_form.gif
 !previews/skinned_bow_textured.gif
+!previews/proof.html
+!previews/proof_match.png
+!previews/proof_handsocket_fails.png
