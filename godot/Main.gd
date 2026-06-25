@@ -97,6 +97,7 @@ var cam_rest := Vector3.ZERO
 var face_flip := true
 var skel: Skeleton3D
 var weapon: Node3D # held weapon: real model (wrapper Node3D) or placeholder box (MeshInstance3D)
+var bow_node: Node3D # baked bow mesh on the hand (archer) -> arrow spawn origin
 var weapon_attach: BoneAttachment3D
 var weapon_scaled := false
 var weapon_offset := WEAPON_OFFSET
@@ -332,6 +333,8 @@ func _build_player(pos: Vector3) -> void:
 	var entry: Dictionary = GameState.current() # autoload; defaults to first character
 	face_flip = entry.get("flip", true)
 	has_weapon = entry.get("weapon", true)
+	if entry.has("default_weapon"):
+		GameState.weapon = clampi(int(entry["default_weapon"]), 0, GameState.weapons.size() - 1)
 	player_str = int(entry.get("str", 10))
 	player_dex = int(entry.get("dex", 10))
 	player_con = int(entry.get("con", 10))
@@ -346,6 +349,7 @@ func _build_player(pos: Vector3) -> void:
 	if scene:
 		model = scene.instantiate()
 		player.add_child(model)
+		bow_node = model.find_child("A1_Bow", true, false) # baked archer bow (if any)
 		_setup_animation()
 		_attach_weapon()
 	else:
@@ -1257,7 +1261,12 @@ func _do_ranged() -> void:
 		ms.mesh = sm
 		bolt = ms
 		add_child(bolt)
-	bolt.position = player.global_position + Vector3(0, 1.2, 0)
+	# spawn the arrow from the BOW (archer) so it leaves from the hand, not the body;
+	# fall back to a chest-height point if there's no bow mesh.
+	if bow_node and is_instance_valid(bow_node):
+		bolt.global_position = bow_node.global_position
+	else:
+		bolt.position = player.global_position + Vector3(0, 1.2, 0)
 	var aim := -cam.global_transform.basis.z # includes pitch — elevate for distance
 	projectiles.append({"mesh": bolt, "vel": aim.normalized() * v0, "mass": mass, "dmg": int(GameState.weapon_data().get("damage", 0)), "life": 4.0})
 

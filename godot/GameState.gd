@@ -11,7 +11,7 @@ var characters := [
 	{"name": "Soldier", "file": "res://models/Soldier.glb", "flip": true, "str": 10, "dex": 10, "con": 10},
 	{"name": "Vanguard", "file": "res://models/Vanguard.glb", "flip": false, "str": 13, "dex": 8, "con": 11},
 	{"name": "Maria", "file": "res://models/Maria.glb", "flip": false, "weapon": false, "str": 10, "dex": 12, "con": 10},
-	{"name": "Erika Archer", "file": "res://models/Erika.glb", "flip": false, "str": 8, "dex": 14, "con": 9},
+	{"name": "Erika Archer", "file": "res://models/erika_bow_final.glb", "flip": false, "weapon": false, "default_weapon": 5, "str": 8, "dex": 14, "con": 9},
 ]
 var selected := 0
 
