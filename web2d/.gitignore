@@ -25,3 +25,5 @@ previews/*
 !previews/fixed_full.png
 !previews/fixed_grip.png
 !previews/fixed_compare.png
+!previews/tilt_compare.png
+!previews/tilt_mine.png
