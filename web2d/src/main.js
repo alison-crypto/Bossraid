@@ -196,14 +196,19 @@ const bossAnim = new Animator();
 
 // --- player (archer) sprite sheet ------------------------------------------
 // Same drop-in scheme as the boss. Missing files fall back to the placeholder.
-const PLAYER_DISPLAY_H = 96; // on-screen height of the archer in px
+// Archer sprite cell includes headroom for raised-bow poses, so the body is ~77%
+// of the cell height — bump the display height so the body reads at its old size.
+const PLAYER_DISPLAY_H = 124; // on-screen height of the archer sprite cell, px
 const ARCHER = {
-  idle:  loadStrip("./assets/archer_idle.png",  6, 8,  true),
-  walk:  loadStrip("./assets/archer_walk.png",  8, 11, true),
-  shoot: loadStrip("./assets/archer_shoot.png", 6, 16, false),
-  hit:   loadStrip("./assets/archer_hit.png",   4, 16, false),
-  death: loadStrip("./assets/archer_death.png", 6, 9,  false),
-  dodge: loadStrip("./assets/archer_dodge.png", 6, 18, false),
+  // 3D-rendered Erika archer (clothed body + attached bow), floor-planted + one
+  // shared camera so every clip shares a scale and feet baseline. 24 frames each;
+  // fps ~ each clip's natural speed.
+  idle:  loadStrip("./assets/archer_idle.png",  24, 14, true),
+  walk:  loadStrip("./assets/archer_walk.png",  24, 22, true),
+  shoot: loadStrip("./assets/archer_shoot.png", 24, 30, false),
+  hit:   loadStrip("./assets/archer_hit.png",   24, 22, false),
+  death: loadStrip("./assets/archer_death.png", 24, 9,  false),
+  dodge: loadStrip("./assets/archer_dodge.png", 24, 26, false),
   // New ability clips. Art is pending — these stay !ok and gracefully fall back
   // to `shoot` (then `idle`) until the frames are dropped in. Frame counts match
   // the art-prompt pack so the strips slot straight in.
