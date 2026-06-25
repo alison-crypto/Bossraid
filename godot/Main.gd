@@ -252,6 +252,10 @@ var run_dodges := 0       # dodges used
 var run_deflect_ok := 0   # hits negated by a deflect
 var run_scored := false   # results already shown for this kill
 var current_floor := 0    # which SAO floor we're on (mastery buff is per-floor)
+# --- target lock (Milestone A): aim/face/shoot at the locked enemy, not the camera ---
+var aim_locked := true     # locked-on -> face + shoot the target; unlocked -> free aim
+var locked_target: Node3D  # the enemy we're locked onto (the boss for now)
+var aim_look: LookAtModifier3D # IK that pitches the spine toward the target (elevation)
 # --- difficulty ladder + floor loop (Milestone 3) ---
 var difficulty := 0       # 0 Normal .. 3 Master
 var pre_run := true       # showing the floor/difficulty select; boss is paused
@@ -547,7 +551,7 @@ func _build_hud() -> void:
 
 	# Boss bar (top-center, 1280-wide design).
 	var name_label := Label.new()
-	name_label.text = "STONE GOLEM"
+	name_label.text = "THE BRUTE"
 	name_label.position = Vector2(340, 18)
 	name_label.add_theme_font_size_override("font_size", 18)
 	root.add_child(name_label)
@@ -617,6 +621,10 @@ func _build_touch_ui(root: Control) -> void:
 		_touch_btn(root, "VOLLEY", Rect2(0.73, 0.52, 0.12, 0.11), func(): _skill_volley())
 		_touch_btn(root, "EXPL", Rect2(0.86, 0.45, 0.12, 0.11), func(): _skill_explosive())
 		_touch_btn(root, "STORM", Rect2(0.73, 0.39, 0.12, 0.11), func(): _special_storm())
+		# target lock toggle + cycle (top-center, near the boss bar)
+		_touch_btn(root, "LOCK", Rect2(0.45, 0.10, 0.10, 0.08), func(): _toggle_lock())
+		_touch_btn(root, "<", Rect2(0.40, 0.10, 0.045, 0.08), func(): _cycle_target(-1))
+		_touch_btn(root, ">", Rect2(0.555, 0.10, 0.045, 0.08), func(): _cycle_target(1))
 	else:
 		_touch_btn(root, "ATTACK", Rect2(0.84, 0.74, 0.14, 0.18), func(): _do_melee())
 		_touch_btn(root, "DODGE", Rect2(0.69, 0.74, 0.12, 0.14), func(): _do_dodge())
@@ -1090,6 +1098,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			_skill_pierce()
 		elif is_archer and event.is_action_pressed("arrow_storm"):
 			_special_storm()
+		elif event.is_action_pressed("aim_lock"):
+			_toggle_lock()
+		elif event.is_action_pressed("target_next"):
+			_cycle_target(1)
+		elif event.is_action_pressed("target_prev"):
+			_cycle_target(-1)
 
 	# Non-archer legacy (kick / gear cycle) — not core to the archer build.
 	if not is_archer and event is InputEventKey and event.pressed and not event.echo:
@@ -1103,12 +1117,13 @@ func _unhandled_input(event: InputEvent) -> void:
 func _physics_process(delta: float) -> void:
 	if not player:
 		return
-	# Touch: auto-orbit the camera to keep the boss in view (aiming is automatic),
-	# so the player only needs the joystick + buttons.
-	if touch_enabled and not player_dead and not boss_dead and boss_root:
-		var tb := boss_root.global_position - player.global_position; tb.y = 0
+	# Locked on: orbit the camera to keep the target in view (both touch + desktop),
+	# so movement strafes around it. Unlocked = free look (desktop mouse / no auto).
+	if aim_locked and not player_dead and _target_valid():
+		var tb := locked_target.global_position - player.global_position; tb.y = 0
 		if tb.length() > 0.5:
-			yaw = lerp_angle(yaw, atan2(tb.x, tb.z) + PI, 0.12)
+			var rate := 0.12 if touch_enabled else 0.18
+			yaw = lerp_angle(yaw, atan2(tb.x, tb.z) + PI, rate)
 	cam_yaw.rotation.y = yaw
 	cam_pitch.rotation.x = pitch
 	player_invuln = max(0.0, player_invuln - delta)
@@ -1166,13 +1181,13 @@ func _physics_process(delta: float) -> void:
 	if model:
 		var face_dir: Vector3
 		if dodging:
-			face_dir = dodge_dir
-		elif is_archer and aiming and touch_enabled and not boss_dead and boss_root:
-			# face the BOSS directly (where arrows auto-aim) so the bow points at it
-			var tb := boss_root.global_position - player.global_position; tb.y = 0
+			face_dir = dodge_dir # dodge rolls toward the joystick direction
+		elif is_archer and aim_locked and _target_valid():
+			# locked on: always face the target so the bow points at it (any platform)
+			var tb := locked_target.global_position - player.global_position; tb.y = 0
 			face_dir = tb.normalized() if tb.length() > 0.3 else fwd
 		elif is_archer and aiming:
-			face_dir = fwd # desktop: face the aim/camera direction
+			face_dir = fwd # desktop free-aim: face the camera direction
 		elif dir.length() > 0.1:
 			face_dir = dir
 		else:
@@ -1658,7 +1673,7 @@ func _show_floor_select() -> void:
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT); dim.color = Color(0, 0, 0, 0.72)
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE; results_layer.add_child(dim)
 	_res_label("FLOOR 1", 0.5, 0.14, 54, Color(1, 0.9, 0.5))
-	_res_label("STONE GOLEM", 0.5, 0.24, 30, Color(0.9, 0.9, 0.95))
+	_res_label("THE BRUTE", 0.5, 0.24, 30, Color(0.9, 0.9, 0.95))
 	_res_label("Lv %d   ·   Floor mastery x%d   ·   SP %d   —   choose difficulty" % [GameState.level, GameState.floor_mastery(current_floor), GameState.skill_points], 0.5, 0.33, 19, Color(0.6, 0.95, 1))
 	for i in DIFF_NAMES.size():
 		var d := i
@@ -1677,6 +1692,7 @@ func _start_floor(d: int) -> void:
 	boss_root.global_position = boss_pos; boss_root.visible = true
 	run_t = 0.0; run_dmg = 0.0; run_dodges = 0; run_deflect_ok = 0; run_scored = false
 	player_hp = player_max; special = 0.0; boss_stagger_t = 0.0; hazard_t = 3.5
+	locked_target = boss_root; aim_locked = true # lock onto the boss
 	_banner("%s" % DIFF_NAMES[difficulty])
 
 
@@ -1973,17 +1989,36 @@ func _fire_arrow(yaw_off: float, mult: float, speed_mult: float, explosive: bool
 		bolt.global_position = bow_node.global_position
 	else:
 		bolt.position = player.global_position + Vector3(0, 1.2, 0)
-	# Aim: on touch, auto-aim at the boss (with a little arc lead) so no manual
-	# camera control is needed; on desktop, the camera forward.
+	# Aim: when locked on, fire STRAIGHT at the target (any platform); otherwise the
+	# camera forward. No arc — arrows shoot straight at where we're aiming.
 	var base_aim := -cam.global_transform.basis.z
-	if touch_enabled and not boss_dead and boss_root:
-		var tgt := boss_root.global_position + Vector3(0, 2.0, 0)
-		base_aim = (tgt - bolt.global_position)
-		base_aim.y += base_aim.length() * 0.04 # arc compensation
+	if aim_locked and _target_valid():
+		base_aim = (_aim_target_pos() - bolt.global_position)
 	var aim := base_aim.normalized().rotated(Vector3.UP, yaw_off)
 	projectiles.append({"mesh": bolt, "vel": aim * v0, "mass": mass,
 		"dmg": int(GameState.weapon_data().get("damage", 0)), "mult": mult,
 		"life": 4.0, "explosive": explosive, "pierce": pierce, "hits": []})
+
+
+func _target_valid() -> bool:
+	return locked_target != null and is_instance_valid(locked_target) and not boss_dead
+
+
+# Where we aim/face on the locked target (chest height).
+func _aim_target_pos() -> Vector3:
+	if not _target_valid():
+		return player.global_position - cam.global_transform.basis.z
+	return locked_target.global_position + Vector3(0, 2.0, 0)
+
+
+func _toggle_lock() -> void:
+	aim_locked = not aim_locked
+
+
+# Cycle targets (only the boss exists now; the system is ready for multiple enemies).
+func _cycle_target(_dir: int) -> void:
+	if boss_root and not boss_dead:
+		locked_target = boss_root; aim_locked = true
 
 
 # Quick shot (LMB).
