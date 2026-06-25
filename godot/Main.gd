@@ -133,8 +133,9 @@ var dodge_dir := Vector3.FORWARD
 # Archer (Erika) animation state. When `is_archer`, the player uses the dedicated
 # 3D-rendered archer clip set + state machine instead of the generic melee one.
 var is_archer := false
+const AIM_HOLD_T := 0.52 # frame of the draw clip where the bow points dead at the target
 var a_idle := ""
-var a_aim := ""        # held aim/draw pose
+var a_aim := ""        # held aim/draw pose (draw clip frozen at AIM_HOLD_T)
 var a_run := ""
 var a_walk := ""
 var a_walk_back := ""  # aiming + moving backward
@@ -748,7 +749,11 @@ func _setup_animation() -> void:
 	if is_archer and skel:
 		const AD := "res://models/anim/archer/"
 		a_idle      = AnimUtil.merge(anim, skel, AD + "idle.fbx", "AIdle")
-		a_aim       = AnimUtil.merge(anim, skel, AD + "idle_aim.fbx", "AAim")
+		# Aim hold = the DRAW clip held at its forward-aim frame (AIM_HOLD_T). idle_aim
+		# holds the bow ~90 deg to the SIDE (the "shoots sideways" bug); the draw motion
+		# passes through a dead-on forward aim mid-clip (fore-arm ~0 deg to target) before
+		# settling sideways, so we freeze it there instead of looping it.
+		a_aim       = AnimUtil.merge(anim, skel, AD + "draw.fbx", "AAim")
 		a_run       = AnimUtil.merge(anim, skel, AD + "run.fbx", "ARun")
 		a_walk      = AnimUtil.merge(anim, skel, AD + "walk.fbx", "AWalk")
 		a_walk_back = AnimUtil.merge(anim, skel, AD + "walk_back.fbx", "AWalkBack")
@@ -761,9 +766,10 @@ func _setup_animation() -> void:
 		a_dodge_b   = AnimUtil.merge(anim, skel, AD + "dodge_back.fbx", "ADodgeB")
 		a_hit       = AnimUtil.merge(anim, skel, AD + "hit.fbx", "AHit")
 		a_death     = AnimUtil.merge(anim, skel, AD + "death.fbx", "ADeath")
-		for n in [a_idle, a_aim, a_run, a_walk, a_walk_back, a_strafe_l, a_strafe_r]:
+		for n in [a_idle, a_run, a_walk, a_walk_back, a_strafe_l, a_strafe_r]:
 			_set_loop(n, true)
-		for n in [a_shoot, a_roll, a_dodge_l, a_dodge_r, a_dodge_b, a_hit, a_death]:
+		# a_aim (draw) is HELD at the forward-aim frame, not looped (see _hold_aim).
+		for n in [a_aim, a_shoot, a_roll, a_dodge_l, a_dodge_r, a_dodge_b, a_hit, a_death]:
 			_set_loop(n, false)
 		# route the generic hooks to archer clips so shared systems just work
 		idle_anim = a_idle if a_idle != "" else idle_anim
@@ -1052,15 +1058,30 @@ func _archer_anim(dir: Vector3, fwd: Vector3, rgt: Vector3) -> void:
 				_play(a_strafe_r if rdot > 0.0 else a_strafe_l)
 			elif fdot < -0.2 and a_walk_back != "":
 				_play(a_walk_back)
+			elif a_walk != "":
+				_play(a_walk) # forward + aiming: walk cycle (legs move, no slide)
 			else:
-				_play(a_aim)
+				_hold_aim()
 		else:
-			_play(a_aim)
+			_hold_aim() # standing: hold the bow drawn + pointed at the target
 	elif moving:
 		var sprint := Input.is_physical_key_pressed(KEY_SHIFT)
 		_play(a_run if (sprint and a_run != "") else (a_walk if a_walk != "" else a_run))
 	else:
 		_play(a_idle)
+
+
+# Hold the bow drawn and pointed at the target. The draw clip animates rest -> a
+# dead-on forward aim (~AIM_HOLD_T) -> a lazy sideways rest; we play it once (so it
+# raises the bow) then freeze on the forward-aim frame instead of looping past it.
+func _hold_aim() -> void:
+	if a_aim == "":
+		return
+	if cur_anim != a_aim:
+		anim.play(a_aim, 0.18)
+		cur_anim = a_aim
+	if anim.current_animation == a_aim and anim.current_animation_position > AIM_HOLD_T:
+		anim.seek(AIM_HOLD_T, true)
 
 
 func _unhandled_input(event: InputEvent) -> void:
