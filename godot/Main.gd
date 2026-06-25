@@ -90,6 +90,21 @@ const PLAYER_MAX := 100.0
 const BOSS_MAX := 8000.0
 const SLAM_RADIUS := 3.6
 
+# --- boss (3-phase Stone Golem) attack tuning -------------------------------
+const BOSS_BASE_CD := 2.2     # seconds between attacks (shrinks with phase)
+const PHASE_STAGGER := 0.9    # stagger/roar on a phase transition
+const SMASH_R := 5.0
+const SMASH_DMG := 16
+const SLAM_DMG := 14
+const QUAKE_R := 16.0         # arena-wide, phase 2+ (only a dodge's i-frames avoid)
+const QUAKE_DMG := 18
+const DASH_SPEED := 15.0
+const DASH_TIME := 0.42
+const DASH_DMG := 16
+const SCATTER_COUNT := 6
+const SCATTER_SPEED := 12.0
+const SCATTER_DMG := 9
+
 var player: CharacterBody3D
 var model: Node3D
 var cam_yaw: Node3D
@@ -190,17 +205,30 @@ var boss_model: Node3D
 var boss_anim: AnimationPlayer
 var boss_idle := ""
 var boss_walk := ""
-var boss_attack := ""
+var boss_attack := ""    # base slam (orc_slam)
+var boss_smash := ""     # close-range AoE pound
+var boss_quake := ""     # arena-wide quake (phase 2+)
+var boss_charge := ""    # dash/leap toward player
+var boss_swipe := ""     # scatter-rock swing
+var boss_roar := ""      # phase-transition roar
 var boss_clip := ""
 var boss_skel: Skeleton3D
 var boss_mat: StandardMaterial3D
 var boss_pos := Vector3(0, 0, -18)
 var boss_hp := BOSS_MAX
-var boss_state := "idle" # idle | windup | recover
+var boss_state := "idle" # idle | windup | strike | dash | recover
 var boss_t := 0.0
 var boss_cd := 3.0
 var boss_flash := 0.0
 var boss_dead := false
+var boss_phase := 1      # 1..3, rises as health thirds deplete
+var boss_kind := ""      # current attack pattern
+var boss_windup := 1.0   # current telegraph duration (for the ring fill)
+var boss_tele_center := Vector3.ZERO
+var boss_tele_r := 1.0
+var dash_vec := Vector3.ZERO
+var dash_hit := false
+var boss_rocks: Array = [] # scatter projectiles: { mesh, vel, life, dmg }
 var slam_ring: MeshInstance3D
 var slam_mat: StandardMaterial3D
 var slam_target := Vector3.ZERO
@@ -333,9 +361,16 @@ func _build_boss(pos: Vector3) -> void:
 			boss_idle = AnimUtil.merge(boss_anim, bsk, "res://models/anim/orc_idle.glb", "Idle")
 			boss_walk = AnimUtil.merge(boss_anim, bsk, "res://models/anim/orc_walk.glb", "Walk")
 			boss_attack = AnimUtil.merge(boss_anim, bsk, "res://models/anim/orc_slam.glb", "Slam")
+			# Phase-3 distinct attack clips (humanoid clips retarget onto the golem rig).
+			boss_smash = AnimUtil.merge(boss_anim, bsk, "res://models/anim/boss/smash.fbx", "BSmash")
+			boss_quake = AnimUtil.merge(boss_anim, bsk, "res://models/anim/boss/quake.fbx", "BQuake")
+			boss_charge = AnimUtil.merge(boss_anim, bsk, "res://models/anim/boss/charge.fbx", "BCharge")
+			boss_swipe = AnimUtil.merge(boss_anim, bsk, "res://models/anim/boss/swipe.fbx", "BSwipe")
+			boss_roar = AnimUtil.merge(boss_anim, bsk, "res://models/anim/boss/roar.fbx", "BRoar")
 			_set_anim_loop(boss_anim, boss_idle, true)
 			_set_anim_loop(boss_anim, boss_walk, true)
-			_set_anim_loop(boss_anim, boss_attack, false)
+			for bn in [boss_attack, boss_smash, boss_quake, boss_charge, boss_swipe, boss_roar]:
+				_set_anim_loop(boss_anim, bn, false)
 			_boss_play(boss_idle)
 			boss_anim.advance(0.0)
 			_scale_boss_to(4.0)
@@ -1083,10 +1118,11 @@ func _ground_boss() -> void:
 func _update_boss(delta: float) -> void:
 	if boss_dead or not boss_root:
 		return
+	_boss_phase_check()
 	var to := player.global_position - boss_root.global_position
 	to.y = 0
 	var dist := to.length()
-	if dist > 0.2:
+	if dist > 0.2 and boss_state != "dash":
 		boss_root.rotation.y = atan2(to.x, to.z)
 
 	if boss_flash > 0.0:
@@ -1096,40 +1132,170 @@ func _update_boss(delta: float) -> void:
 		if boss_flash > 0.0:
 			boss_mat.emission = Color(0.6, 0.5, 0.4)
 
+	var spd_mult := 1.0 + 0.28 * (boss_phase - 1)
+	var dmg_mult := 1.0 + 0.22 * (boss_phase - 1)
 	match boss_state:
 		"idle":
-			if dist > 4.0:
-				boss_root.global_position += to.normalized() * 2.2 * delta
+			if dist > 4.5:
+				boss_root.global_position += to.normalized() * (2.2 * spd_mult) * delta
 				_boss_play(boss_walk)
 			else:
 				_boss_play(boss_idle)
 			boss_cd -= delta
-			if boss_cd <= 0.0 and dist < 16.0:
-				boss_state = "windup"
-				boss_t = 1.1
-				_boss_play(boss_attack)
-				slam_target = player.global_position
-				slam_target.y = 0.05
-				slam_ring.global_position = slam_target
-				slam_ring.visible = true
+			if boss_cd <= 0.0 and dist < 24.0:
+				_boss_choose(dist)
 		"windup":
 			boss_t -= delta
-			var k: float = clamp(1.0 - boss_t / 1.1, 0.0, 1.0)
-			slam_mat.albedo_color = Color(1, 0.2, 0.15, 0.25 + k * 0.45)
+			var k: float = clamp(1.0 - boss_t / max(0.01, boss_windup), 0.0, 1.0)
+			slam_mat.albedo_color = Color(1, 0.3 - 0.12 * k, 0.12, 0.22 + k * 0.55)
 			if boss_t <= 0.0:
-				boss_state = "recover"
-				boss_t = 0.6
-				slam_mat.albedo_color = Color(1, 0.55, 0.2, 0.85)
-				var pd := player.global_position - slam_target
-				pd.y = 0
-				if pd.length() < SLAM_RADIUS + 0.4:
-					_damage_player(22)
+				_boss_strike(dmg_mult)
+		"dash":
+			boss_t -= delta
+			boss_root.global_position += dash_vec * delta
+			if not dash_hit:
+				var d2 := player.global_position - boss_root.global_position
+				d2.y = 0
+				if d2.length() < 2.7:
+					_damage_player(int(round(DASH_DMG * dmg_mult)))
+					dash_hit = true
+			if boss_t <= 0.0:
+				boss_state = "recover"; boss_t = 0.6; slam_ring.visible = false
 		"recover":
 			boss_t -= delta
 			if boss_t <= 0.0:
 				boss_state = "idle"
-				boss_cd = 2.4
+				boss_cd = BOSS_BASE_CD * (1.0 - 0.16 * (boss_phase - 1))
 				slam_ring.visible = false
+	_update_rocks(delta)
+
+
+# Bump the phase when a health third empties: stagger, roar, escalate.
+func _boss_phase_check() -> void:
+	var frac := boss_hp / BOSS_MAX
+	var ph := 1 if frac > 2.0 / 3.0 else (2 if frac > 1.0 / 3.0 else 3)
+	if ph > boss_phase and boss_hp > 0.0:
+		boss_phase = ph
+		boss_state = "recover"; boss_t = PHASE_STAGGER; boss_cd = 0.0
+		slam_ring.visible = false
+		if boss_roar != "":
+			_boss_play(boss_roar)
+		_banner("PHASE %d" % ph)
+
+
+# Pick an attack by range + phase, set its telegraph + windup + clip.
+func _boss_choose(dist: float) -> void:
+	var r := randf()
+	var kind := "slam"
+	if dist < 6.0:
+		kind = "smash"
+	elif dist > 14.0:
+		kind = "scatter" if r < 0.6 else "slam"
+	else:
+		kind = "charge" if r < 0.5 else "slam"
+	if boss_phase >= 2 and r > 0.82:
+		kind = "quake"
+	boss_kind = kind
+	var wm := 1.0 - 0.12 * (boss_phase - 1)
+	match kind:
+		"smash":
+			boss_windup = 0.85 * wm; _telegraph(boss_root.global_position, SMASH_R)
+			_boss_play(boss_smash if boss_smash != "" else boss_attack)
+		"slam":
+			boss_windup = 1.0 * wm
+			var t := player.global_position; t.y = 0.05
+			_telegraph(t, SLAM_RADIUS); _boss_play(boss_attack)
+		"charge":
+			boss_windup = 0.55 * wm; _telegraph(boss_root.global_position, 2.4)
+			_boss_play(boss_charge if boss_charge != "" else boss_attack)
+		"scatter":
+			boss_windup = 0.8 * wm; _telegraph(boss_root.global_position, 3.0)
+			_boss_play(boss_swipe if boss_swipe != "" else boss_attack)
+		"quake":
+			boss_windup = 1.15 * wm; _telegraph(boss_root.global_position, QUAKE_R)
+			_boss_play(boss_quake if boss_quake != "" else boss_attack)
+	boss_state = "windup"; boss_t = boss_windup
+
+
+func _telegraph(center: Vector3, radius: float) -> void:
+	boss_tele_center = center; boss_tele_r = radius
+	slam_ring.global_position = Vector3(center.x, 0.05, center.z)
+	slam_ring.scale = Vector3(radius / SLAM_RADIUS, 1.0, radius / SLAM_RADIUS)
+	slam_mat.albedo_color = Color(1, 0.3, 0.12, 0.25)
+	slam_ring.visible = true
+
+
+func _player_within(center: Vector3, r: float) -> bool:
+	var d := player.global_position - center; d.y = 0
+	return d.length() < r + 0.4
+
+
+# Resolve the active pattern's effect.
+func _boss_strike(dmg_mult: float) -> void:
+	slam_mat.albedo_color = Color(1, 0.55, 0.2, 0.85)
+	match boss_kind:
+		"smash":
+			if _player_within(boss_root.global_position, SMASH_R):
+				_damage_player(int(round(SMASH_DMG * dmg_mult)))
+			_spawn_shock(boss_root.global_position, SMASH_R)
+			boss_state = "recover"; boss_t = 0.55
+		"slam":
+			if _player_within(boss_tele_center, SLAM_RADIUS):
+				_damage_player(int(round(SLAM_DMG * dmg_mult)))
+			boss_state = "recover"; boss_t = 0.55
+		"quake":
+			_damage_player(int(round(QUAKE_DMG * dmg_mult))) # i-frames (dodge) skip it
+			_spawn_shock(boss_root.global_position, QUAKE_R)
+			boss_state = "recover"; boss_t = 0.9
+		"charge":
+			var to := player.global_position - boss_root.global_position; to.y = 0
+			dash_vec = to.normalized() * (DASH_SPEED * (1.0 + 0.28 * (boss_phase - 1)))
+			dash_hit = false
+			boss_state = "dash"; boss_t = DASH_TIME; slam_ring.visible = false
+		"scatter":
+			_spawn_scatter(int(round(SCATTER_DMG * dmg_mult)))
+			boss_state = "recover"; boss_t = 0.6
+
+
+# A quick expanding ground ring (dust) — pure visual for smash/quake impacts.
+func _spawn_shock(center: Vector3, radius: float) -> void:
+	var s := MeshInstance3D.new()
+	var cyl := CylinderMesh.new(); cyl.top_radius = 0.5; cyl.bottom_radius = 0.5; cyl.height = 0.1; cyl.radial_segments = 32
+	s.mesh = cyl
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.85, 0.75, 0.55, 0.6); mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.emission_enabled = true; mat.emission = Color(0.8, 0.6, 0.3)
+	s.material_override = mat; add_child(s); s.global_position = Vector3(center.x, 0.06, center.z)
+	var tw := create_tween(); tw.set_parallel(true)
+	tw.tween_property(s, "scale", Vector3(radius / 0.5, 1.0, radius / 0.5), 0.35)
+	tw.tween_property(mat, "albedo_color:a", 0.0, 0.35)
+	tw.chain().tween_callback(s.queue_free)
+
+
+# Scatter: fling rocks radially from the boss; they arc and hit the player.
+func _spawn_scatter(dmg: int) -> void:
+	var origin := boss_root.global_position + Vector3(0, 2.0, 0)
+	for k in SCATTER_COUNT:
+		var ang := TAU * float(k) / float(SCATTER_COUNT)
+		var dir := Vector3(cos(ang), 0, sin(ang))
+		var rock := MeshInstance3D.new()
+		var sm := SphereMesh.new(); sm.radius = 0.35; sm.height = 0.7; rock.mesh = sm
+		var mat := StandardMaterial3D.new(); mat.albedo_color = Color(0.4, 0.36, 0.32); rock.material_override = mat
+		add_child(rock); rock.global_position = origin
+		boss_rocks.append({"mesh": rock, "vel": dir * SCATTER_SPEED + Vector3.UP * 4.5, "life": 3.0, "dmg": dmg})
+
+
+func _update_rocks(delta: float) -> void:
+	for i in range(boss_rocks.size() - 1, -1, -1):
+		var rk = boss_rocks[i]
+		rk.vel.y -= gravity * delta
+		rk.mesh.global_position += rk.vel * delta
+		rk.life -= delta
+		var done := false
+		if (player.global_position - rk.mesh.global_position).length() < 1.0:
+			_damage_player(rk.dmg); done = true
+		if done or rk.life <= 0.0 or rk.mesh.global_position.y < 0.0:
+			rk.mesh.queue_free(); boss_rocks.remove_at(i)
 
 
 func _damage_player(dmg: int) -> void:
