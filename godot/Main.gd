@@ -141,7 +141,10 @@ var a_walk_back := ""  # aiming + moving backward
 var a_strafe_l := ""
 var a_strafe_r := ""
 var a_shoot := ""      # release one-shot
-var a_roll := ""       # dodge
+var a_roll := ""       # dodge (forward/roll)
+var a_dodge_l := ""    # dodge left
+var a_dodge_r := ""    # dodge right
+var a_dodge_b := ""    # dodge back
 var a_hit := ""        # flinch one-shot
 var a_death := ""
 var shoot_t := 0.0     # seconds left on the shoot one-shot
@@ -697,11 +700,14 @@ func _setup_animation() -> void:
 		a_strafe_r  = AnimUtil.merge(anim, skel, AD + "strafe_right.fbx", "AStrafeR")
 		a_shoot     = AnimUtil.merge(anim, skel, AD + "shoot.fbx", "AShoot")
 		a_roll      = AnimUtil.merge(anim, skel, AD + "roll.fbx", "ARoll")
+		a_dodge_l   = AnimUtil.merge(anim, skel, AD + "dodge_left.fbx", "ADodgeL")
+		a_dodge_r   = AnimUtil.merge(anim, skel, AD + "dodge_right.fbx", "ADodgeR")
+		a_dodge_b   = AnimUtil.merge(anim, skel, AD + "dodge_back.fbx", "ADodgeB")
 		a_hit       = AnimUtil.merge(anim, skel, AD + "hit.fbx", "AHit")
 		a_death     = AnimUtil.merge(anim, skel, AD + "death.fbx", "ADeath")
 		for n in [a_idle, a_aim, a_run, a_walk, a_walk_back, a_strafe_l, a_strafe_r]:
 			_set_loop(n, true)
-		for n in [a_shoot, a_roll, a_hit, a_death]:
+		for n in [a_shoot, a_roll, a_dodge_l, a_dodge_r, a_dodge_b, a_hit, a_death]:
 			_set_loop(n, false)
 		# route the generic hooks to archer clips so shared systems just work
 		idle_anim = a_idle if a_idle != "" else idle_anim
@@ -977,9 +983,11 @@ func _archer_anim(dir: Vector3, fwd: Vector3, rgt: Vector3) -> void:
 		_play(a_death); return
 	if player_hit_t > 0.0 and a_hit != "":
 		_play(a_hit); return
-	if shoot_t > 0.0 and a_shoot != "":
-		_play(a_shoot); return
 	var moving := dir.length() > 0.1
+	# Shoot pose only when standing — while moving, keep the locomotion/strafe cycle
+	# (the bow is already drawn there) so the legs don't freeze and slide.
+	if not moving and shoot_t > 0.0 and a_shoot != "":
+		_play(a_shoot); return
 	if aiming:
 		if moving:
 			var fdot := dir.dot(fwd)
@@ -1048,7 +1056,7 @@ func _physics_process(delta: float) -> void:
 	if touch_enabled and not player_dead and not boss_dead and boss_root:
 		var tb := boss_root.global_position - player.global_position; tb.y = 0
 		if tb.length() > 0.5:
-			yaw = lerp_angle(yaw, atan2(tb.x, tb.z) + PI, 0.05)
+			yaw = lerp_angle(yaw, atan2(tb.x, tb.z) + PI, 0.12)
 	cam_yaw.rotation.y = yaw
 	cam_pitch.rotation.x = pitch
 	player_invuln = max(0.0, player_invuln - delta)
@@ -1112,14 +1120,18 @@ func _physics_process(delta: float) -> void:
 		var face_dir: Vector3
 		if dodging:
 			face_dir = dodge_dir
+		elif is_archer and aiming and touch_enabled and not boss_dead and boss_root:
+			# face the BOSS directly (where arrows auto-aim) so the bow points at it
+			var tb := boss_root.global_position - player.global_position; tb.y = 0
+			face_dir = tb.normalized() if tb.length() > 0.3 else fwd
 		elif is_archer and aiming:
-			face_dir = fwd # face the aim/camera direction so strafes read correctly
+			face_dir = fwd # desktop: face the aim/camera direction
 		elif dir.length() > 0.1:
 			face_dir = dir
 		else:
 			face_dir = fwd
 		var target := atan2(face_dir.x, face_dir.z) + (PI if face_flip else 0.0)
-		model_facing = lerp_angle(model_facing, target, 0.2)
+		model_facing = lerp_angle(model_facing, target, 0.25)
 		model.rotation.y = model_facing
 	# Animation state: swings/dodge play their own one-shots; otherwise the archer
 	# uses its dedicated state machine, else block pose / idle-run locomotion.
@@ -1631,14 +1643,31 @@ func _do_dodge() -> void:
 		d += rgt
 	if Input.is_physical_key_pressed(KEY_A):
 		d -= rgt
+	if touch_move.length() > 0.15: # joystick direction on touch
+		d += rgt * touch_move.x - fwd * touch_move.y
 	dodge_dir = d.normalized() if d.length() > 0.1 else fwd
 	dodging = true
 	dodge_t = DODGE_TIME
 	_cancel_swing() # dodge cancels any swing (active-frames rule)
 	player_invuln = max(player_invuln, dodge_iframes)
-	if dodge_anim != "" and anim and anim.has_animation(dodge_anim):
-		anim.play(dodge_anim, 0.05)
-		cur_anim = dodge_anim
+	# Pick a directional dodge clip and play it FAST enough to actually read within
+	# the short dodge window (the long roll otherwise only shows its standing wind-up
+	# -> looks like a slide). Direction is relative to where the character faces.
+	var clip := dodge_anim
+	if is_archer:
+		var f := dodge_dir.dot(fwd)
+		var r := dodge_dir.dot(rgt)
+		if absf(r) > absf(f) and (a_strafe_l != "" or a_strafe_r != ""):
+			clip = a_dodge_r if r > 0.0 else a_dodge_l
+		elif f < -0.2 and a_dodge_b != "":
+			clip = a_dodge_b
+		else:
+			clip = a_roll
+	if clip != "" and anim and anim.has_animation(clip):
+		var ln: float = anim.get_animation(clip).length
+		var spd: float = clampf(ln / (DODGE_TIME + 0.15), 1.0, 6.0) # fit the dodge window
+		anim.play(clip, 0.05, spd)
+		cur_anim = clip
 
 
 # Resolve a melee swing's hit (dummy + boss) using the current aim direction.
