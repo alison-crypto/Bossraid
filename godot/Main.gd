@@ -61,6 +61,31 @@ const V_PER_DEX := 0.7
 const ARROW_DRAG := 0.0006
 const RANGED_CD := 0.4
 
+# --- archer ability kit (ported from web2d) ---------------------------------
+const STAMINA_MAX := 120.0
+const STA_REGEN := 30.0
+const STA_REGEN_DELAY := 0.5
+const STA_QUICK := 8.0
+const STA_POWER := 24.0
+const STA_SPREAD := 14.0
+const POWER_MULT := 1.9       # power-shot damage multiplier
+const SPREAD_COUNT := 3
+const SPREAD_ARC := 0.5       # radians, total horizontal fan
+const VOLLEY_COUNT := 5
+const VOLLEY_ARC := 0.10
+const CD_VOLLEY := 6.0
+const CD_EXPLOSIVE := 9.0
+const EXPLOSIVE_R := 3.4      # AoE radius in metres
+const EXPLOSIVE_DMG := 160
+const CD_PIERCE := 8.0
+const PIERCE_MULT := 2.6
+const CD_DEFLECT := 5.0
+const DEFLECT_TIME := 0.45
+const CD_STORM := 16.0
+const STORM_COUNT := 18
+const SPECIAL_GAIN_HIT := 0.04
+const SPECIAL_GAIN_TAKEN := 0.08
+
 const PLAYER_MAX := 100.0
 const BOSS_MAX := 8000.0
 const SLAM_RADIUS := 3.6
@@ -106,6 +131,16 @@ var a_hit := ""        # flinch one-shot
 var a_death := ""
 var shoot_t := 0.0     # seconds left on the shoot one-shot
 var player_hit_t := 0.0 # seconds left on the hit flinch
+# archer ability runtime: stamina, special meter (0..1), per-skill cooldowns
+var stamina := STAMINA_MAX
+var sta_regen_t := 0.0
+var special := 0.0
+var deflect_t := 0.0
+var cd_volley := 0.0
+var cd_explosive := 0.0
+var cd_pierce := 0.0
+var cd_deflect := 0.0
+var cd_storm := 0.0
 var blocking := false
 var block_t := 0.0      # seconds the current block has been held (for parry window)
 var aiming := false
@@ -184,6 +219,9 @@ var hud_banner: Label
 var hud_weapon: Label
 var hud_gear: Label
 var hud_hint: Label
+var hud_stamina_fill: ColorRect
+var hud_special_fill: ColorRect
+var hud_cd: Label
 var menu: GameMenu
 
 
@@ -403,6 +441,20 @@ func _build_hud() -> void:
 	hud_player_fill = _rect(Color(0.36, 0.85, 0.42), Vector2(26, 26), Vector2(296, 20))
 	root.add_child(hud_player_fill)
 
+	# Archer: stamina (yellow) + Arrow-Storm meter (cyan) under the HP bar.
+	if is_archer:
+		root.add_child(_rect(Color(0, 0, 0, 0.5), Vector2(24, 52), Vector2(220, 12)))
+		hud_stamina_fill = _rect(Color(0.95, 0.82, 0.30), Vector2(26, 54), Vector2(216, 8))
+		root.add_child(hud_stamina_fill)
+		root.add_child(_rect(Color(0, 0, 0, 0.5), Vector2(24, 68), Vector2(220, 10)))
+		hud_special_fill = _rect(Color(0.40, 0.85, 1.0), Vector2(26, 70), Vector2(0, 6))
+		root.add_child(hud_special_fill)
+		hud_cd = Label.new()
+		hud_cd.position = Vector2(24, 82)
+		hud_cd.add_theme_font_size_override("font_size", 13)
+		hud_cd.modulate = Color(0.85, 0.9, 1.0)
+		root.add_child(hud_cd)
+
 	# Boss bar (top-center, 1280-wide design).
 	var name_label := Label.new()
 	name_label.text = "STONE GOLEM"
@@ -438,7 +490,7 @@ func _build_hud() -> void:
 	hud_hint.position = Vector2(24, 612)
 	hud_hint.add_theme_font_size_override("font_size", 16)
 	hud_hint.modulate = Color(0.8, 0.85, 0.95)
-	hud_hint.text = "[C] Stats   [I] Inventory   [K] Skills"
+	hud_hint.text = "LMB Shot  RMB Power  MMB Aim  1 Spread  2 Volley  3 Explosive  4 Pierce  Q Deflect  X Storm  Space Dodge" if is_archer else "[C] Stats   [I] Inventory   [K] Skills"
 	root.add_child(hud_hint)
 
 
@@ -816,12 +868,19 @@ func _unhandled_input(event: InputEvent) -> void:
 		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 		elif event.button_index == MOUSE_BUTTON_LEFT:
-			if aiming:
+			if is_archer:
+				_do_ranged() # archer: quick shot
+			elif aiming:
 				_do_ranged() # while aiming, left-click shoots
 			else:
 				_do_melee()
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
-			_do_heavy()
+			if is_archer:
+				_shot_power() # archer: power shot
+			else:
+				_do_heavy()
+	elif is_archer and event is InputEventKey and event.pressed and not event.echo and _archer_key(event.keycode):
+		pass # handled in _archer_key
 	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_SPACE:
 		_do_dodge()
 	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F:
@@ -872,7 +931,7 @@ func _physics_process(delta: float) -> void:
 
 	# Block (hold Q): raising guard cancels an in-progress swing (active-frames
 	# rule). Can't block mid-dodge/aim. block_t feeds the parry window.
-	var want_block := Input.is_physical_key_pressed(KEY_Q) and not dodging and not aiming and not player_dead
+	var want_block := Input.is_physical_key_pressed(KEY_Q) and not dodging and not aiming and not player_dead and not is_archer
 	if want_block and attacking:
 		_cancel_swing()
 	if want_block and not blocking:
@@ -1086,6 +1145,8 @@ func _damage_player(dmg: int) -> void:
 	var taken: int = max(0, dmg - player_def) # equipment defence subtracts directly
 	player_hp = max(0.0, player_hp - taken)
 	player_invuln = 0.7
+	if is_archer:
+		special = min(1.0, special + SPECIAL_GAIN_TAKEN) # taking hits also builds the meter
 	if player_hp <= 0.0:
 		_player_die()
 	elif is_archer and a_hit != "" and anim and anim.has_animation(a_hit):
@@ -1108,6 +1169,8 @@ func _hit_boss(dmg: int) -> void:
 	boss_hp = max(0.0, boss_hp - dmg)
 	boss_flash = 0.12
 	_spawn_damage(boss_root.global_position + Vector3(0, 4.6, 0), dmg)
+	if is_archer:
+		special = min(1.0, special + SPECIAL_GAIN_HIT) # build the Arrow Storm meter
 	if boss_hp <= 0.0:
 		_boss_die()
 
@@ -1323,17 +1386,16 @@ func td_dot(v: Vector3, aim: Vector3) -> float:
 	return v.normalized().dot(aim)
 
 
-func _do_ranged() -> void:
-	if ranged_cd > 0.0 or player_dead:
-		return
-	if attacking:
-		_cancel_swing() # a shot cancels an in-progress swing
-	ranged_cd = RANGED_CD
+func _play_shoot() -> void:
 	if is_archer and a_shoot != "" and anim and anim.has_animation(a_shoot):
-		shoot_t = anim.get_animation(a_shoot).length # play the release one-shot
-	# Arrow physics: mass from STR (draw weight), launch speed from DEX (+ skill).
+		shoot_t = anim.get_animation(a_shoot).length
+
+
+# Spawn one arrow. yaw_off fans it around world-up (spread/volley); mult scales the
+# impact damage; speed_mult scales launch speed; explosive/pierce tag its behaviour.
+func _fire_arrow(yaw_off: float, mult: float, speed_mult: float, explosive: bool, pierce: bool) -> void:
 	var mass := _arrow_mass()
-	var v0 := _arrow_v0()
+	var v0 := _arrow_v0() * speed_mult
 	var bolt: Node3D
 	var arrow_scene = load("res://models/weapons/arrow1.glb")
 	if arrow_scene:
@@ -1345,20 +1407,129 @@ func _do_ranged() -> void:
 			bolt.scale = Vector3.ONE * (0.8 / along)
 	else:
 		var ms := MeshInstance3D.new()
-		var sm := SphereMesh.new()
-		sm.radius = 0.12
-		sm.height = 0.24
-		ms.mesh = sm
-		bolt = ms
-		add_child(bolt)
-	# spawn the arrow from the BOW (archer) so it leaves from the hand, not the body;
-	# fall back to a chest-height point if there's no bow mesh.
+		var sm := SphereMesh.new(); sm.radius = 0.12; sm.height = 0.24
+		ms.mesh = sm; bolt = ms; add_child(bolt)
+	# spawn from the BOW (archer) so the arrow leaves the hand, not the body
 	if bow_node and is_instance_valid(bow_node):
 		bolt.global_position = bow_node.global_position
 	else:
 		bolt.position = player.global_position + Vector3(0, 1.2, 0)
-	var aim := -cam.global_transform.basis.z # includes pitch — elevate for distance
-	projectiles.append({"mesh": bolt, "vel": aim.normalized() * v0, "mass": mass, "dmg": int(GameState.weapon_data().get("damage", 0)), "life": 4.0})
+	var aim := (-cam.global_transform.basis.z).rotated(Vector3.UP, yaw_off).normalized()
+	projectiles.append({"mesh": bolt, "vel": aim * v0, "mass": mass,
+		"dmg": int(GameState.weapon_data().get("damage", 0)), "mult": mult,
+		"life": 4.0, "explosive": explosive, "pierce": pierce, "hits": []})
+
+
+# Quick shot (LMB).
+func _do_ranged() -> void:
+	if ranged_cd > 0.0 or player_dead:
+		return
+	if is_archer and stamina < STA_QUICK:
+		return
+	if attacking:
+		_cancel_swing() # a shot cancels an in-progress swing
+	ranged_cd = RANGED_CD
+	_play_shoot()
+	if is_archer:
+		stamina -= STA_QUICK; sta_regen_t = STA_REGEN_DELAY
+	_fire_arrow(0.0, 1.0, 1.0, false, false)
+
+
+# Power shot — heavier, faster single arrow (RMB).
+func _shot_power() -> void:
+	if ranged_cd > 0.0 or player_dead or stamina < STA_POWER:
+		return
+	ranged_cd = RANGED_CD * 1.7; _play_shoot()
+	stamina -= STA_POWER; sta_regen_t = STA_REGEN_DELAY
+	_fire_arrow(0.0, POWER_MULT, 1.12, false, false)
+
+
+# Spread — 3-arrow horizontal fan (key 1).
+func _shot_spread() -> void:
+	if ranged_cd > 0.0 or player_dead or stamina < STA_SPREAD:
+		return
+	ranged_cd = RANGED_CD * 1.3; _play_shoot()
+	stamina -= STA_SPREAD; sta_regen_t = STA_REGEN_DELAY
+	var n := SPREAD_COUNT; var step := SPREAD_ARC / float(max(1, n - 1))
+	for k in n:
+		_fire_arrow((k - (n - 1) / 2.0) * step, 1.0, 1.0, false, false)
+
+
+# Volley — 5-arrow burst on a cooldown (key 2).
+func _skill_volley() -> void:
+	if cd_volley > 0.0 or player_dead:
+		return
+	cd_volley = CD_VOLLEY; _play_shoot()
+	var n := VOLLEY_COUNT
+	for k in n:
+		_fire_arrow((k - (n - 1) / 2.0) * VOLLEY_ARC, 0.7, 1.0, false, false)
+
+
+# Explosive arrow — AoE on impact (key 3).
+func _skill_explosive() -> void:
+	if cd_explosive > 0.0 or player_dead:
+		return
+	cd_explosive = CD_EXPLOSIVE; _play_shoot()
+	_fire_arrow(0.0, 0.8, 0.9, true, false)
+
+
+# Piercing bolt — fast, high damage, passes through (key 4).
+func _skill_pierce() -> void:
+	if cd_pierce > 0.0 or player_dead:
+		return
+	cd_pierce = CD_PIERCE; _play_shoot()
+	_fire_arrow(0.0, PIERCE_MULT, 1.3, false, true)
+
+
+# Deflect — brief reflect window + i-frames (Q).
+func _skill_deflect() -> void:
+	if cd_deflect > 0.0 or player_dead:
+		return
+	cd_deflect = CD_DEFLECT; deflect_t = DEFLECT_TIME
+	player_invuln = max(player_invuln, DEFLECT_TIME)
+
+
+# Arrow Storm — needs a full special meter (X).
+func _special_storm() -> void:
+	if cd_storm > 0.0 or special < 1.0 or player_dead:
+		return
+	cd_storm = CD_STORM; special = 0.0; _play_shoot()
+	var n := STORM_COUNT
+	for k in n:
+		_fire_arrow((k - (n - 1) / 2.0) * 0.06, 1.0, 1.0 + 0.015 * k, false, false)
+
+
+# Archer ability hotkeys. Returns true if the key was an ability (so input routing
+# knows it was handled). 1 spread · 2 volley · 3 explosive · 4 pierce · Q deflect ·
+# X arrow storm. (LMB quick, RMB power, Space dodge are handled elsewhere.)
+func _archer_key(kc: int) -> bool:
+	match kc:
+		KEY_1: _shot_spread(); return true
+		KEY_2: _skill_volley(); return true
+		KEY_3: _skill_explosive(); return true
+		KEY_4: _skill_pierce(); return true
+		KEY_Q: _skill_deflect(); return true
+		KEY_X: _special_storm(); return true
+	return false
+
+
+# AoE blast: damage targets near `pos` + a quick expanding flash.
+func _explode(pos: Vector3) -> void:
+	if not boss_dead and boss_root and boss_root.global_position.distance_to(pos) < EXPLOSIVE_R + 1.5:
+		_hit_boss(EXPLOSIVE_DMG)
+	if dummy_pos.distance_to(pos) < EXPLOSIVE_R:
+		_hit_dummy(EXPLOSIVE_DMG)
+	var s := MeshInstance3D.new()
+	var sm := SphereMesh.new(); sm.radius = 0.35; sm.height = 0.7; s.mesh = sm
+	var mat := StandardMaterial3D.new()
+	mat.emission_enabled = true; mat.emission = Color(1.0, 0.6, 0.2)
+	mat.albedo_color = Color(1.0, 0.6, 0.2, 0.7)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	s.material_override = mat; add_child(s); s.global_position = pos
+	var tw := create_tween(); tw.set_parallel(true)
+	tw.tween_property(s, "scale", Vector3.ONE * (EXPLOSIVE_R / 0.35), 0.3)
+	tw.tween_property(mat, "albedo_color:a", 0.0, 0.3)
+	tw.chain().tween_callback(s.queue_free)
 
 
 func _update_combat(delta: float) -> void:
@@ -1366,6 +1537,16 @@ func _update_combat(delta: float) -> void:
 	ranged_cd = max(0.0, ranged_cd - delta)
 	shoot_t = max(0.0, shoot_t - delta)       # archer release one-shot timer
 	player_hit_t = max(0.0, player_hit_t - delta) # archer flinch timer
+	if is_archer:
+		sta_regen_t = max(0.0, sta_regen_t - delta)
+		if sta_regen_t <= 0.0:
+			stamina = min(STAMINA_MAX, stamina + STA_REGEN * delta)
+		cd_volley = max(0.0, cd_volley - delta)
+		cd_explosive = max(0.0, cd_explosive - delta)
+		cd_pierce = max(0.0, cd_pierce - delta)
+		cd_deflect = max(0.0, cd_deflect - delta)
+		cd_storm = max(0.0, cd_storm - delta)
+		deflect_t = max(0.0, deflect_t - delta)
 
 	# The hit resolves on _on_anim_finished (swing complete). Safety net: if that
 	# signal is ever missed, land the hit and release once the swing's full
@@ -1393,15 +1574,21 @@ func _update_combat(delta: float) -> void:
 			var up: Vector3 = Vector3.UP if absf(p.vel.normalized().y) < 0.99 else Vector3.FORWARD
 			p.mesh.look_at(p.mesh.global_position - p.vel, up)
 		p.life -= delta
-		# Kinetic-energy damage at impact: 0.5*m*v^2 + bow damage (far = softer).
-		var ke_dmg := int(round(0.5 * p.mass * p.vel.length_squared() + p.dmg))
+		# Kinetic-energy damage at impact: (0.5*m*v^2 + bow damage) * ability mult.
+		var ke_dmg := int(round((0.5 * p.mass * p.vel.length_squared() + p.dmg) * float(p.get("mult", 1.0))))
 		var done := false
-		if p.mesh.position.distance_to(dcenter) < 0.7:
-			_hit_dummy(ke_dmg)
-			done = true
-		elif not boss_dead and p.mesh.position.distance_to(bcenter) < 2.2:
-			_hit_boss(ke_dmg)
-			done = true
+		# pierce arrows pass through (one hit per target, tracked in p.hits); explosive
+		# arrows detonate an AoE; plain arrows stop on first hit.
+		if p.mesh.position.distance_to(dcenter) < 0.7 and not ("dummy" in p.hits):
+			_hit_dummy(ke_dmg); p.hits.append("dummy")
+			if p.explosive: _explode(p.mesh.position); done = true
+			elif not p.pierce: done = true
+		elif not boss_dead and p.mesh.position.distance_to(bcenter) < 2.2 and not ("boss" in p.hits):
+			_hit_boss(ke_dmg); p.hits.append("boss")
+			if p.explosive: _explode(p.mesh.position); done = true
+			elif not p.pierce: done = true
+		if not done and p.explosive and p.mesh.position.y < 0.0:
+			_explode(p.mesh.position); done = true
 		if done or p.life <= 0.0 or p.mesh.position.y < 0.0:
 			p.mesh.queue_free()
 			projectiles.remove_at(i)
@@ -1464,3 +1651,17 @@ func _update_hud() -> void:
 		hud_player_fill.size = Vector2(296.0 * (player_hp / player_max), 20)
 	if hud_boss_fill:
 		hud_boss_fill.size = Vector2(596.0 * (boss_hp / BOSS_MAX), 14)
+	if is_archer:
+		if hud_stamina_fill:
+			hud_stamina_fill.size = Vector2(216.0 * clampf(stamina / STAMINA_MAX, 0.0, 1.0), 8)
+		if hud_special_fill:
+			hud_special_fill.size = Vector2(216.0 * clampf(special, 0.0, 1.0), 6)
+			hud_special_fill.color = Color(1.0, 0.85, 0.3) if special >= 1.0 else Color(0.40, 0.85, 1.0)
+		if hud_cd:
+			var parts := []
+			if cd_volley > 0.0: parts.append("Volley %.0f" % ceil(cd_volley))
+			if cd_explosive > 0.0: parts.append("Expl %.0f" % ceil(cd_explosive))
+			if cd_pierce > 0.0: parts.append("Pierce %.0f" % ceil(cd_pierce))
+			if cd_deflect > 0.0: parts.append("Deflect %.0f" % ceil(cd_deflect))
+			if cd_storm > 0.0: parts.append("Storm %.0f" % ceil(cd_storm))
+			hud_cd.text = "   ".join(parts)
