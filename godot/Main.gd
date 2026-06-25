@@ -252,6 +252,16 @@ var run_dodges := 0       # dodges used
 var run_deflect_ok := 0   # hits negated by a deflect
 var run_scored := false   # results already shown for this kill
 var current_floor := 0    # which SAO floor we're on (mastery buff is per-floor)
+# --- difficulty ladder + floor loop (Milestone 3) ---
+var difficulty := 0       # 0 Normal .. 3 Master
+var pre_run := true       # showing the floor/difficulty select; boss is paused
+var boss_max := BOSS_MAX  # current boss HP cap (scales with difficulty)
+var boss_stagger_t := 0.0 # bonus-damage window during a phase-transition roar
+var hazard_t := 0.0       # falling-rock hazard timer (Hard+)
+const DIFF_NAMES := ["NORMAL", "HARD", "EXPERT", "MASTER"]
+const DIFF_HP := [1.0, 1.4, 1.9, 2.5]
+const DIFF_DMG := [1.0, 1.3, 1.7, 2.2]
+const DIFF_WIN := [1.0, 0.85, 0.72, 0.6] # telegraph windup multiplier (faster = harder)
 var results_layer: CanvasLayer
 var result_buttons: Array = [] # results-screen tap targets: [{frac, cb}]
 var last_res := {}
@@ -291,6 +301,7 @@ func _ready() -> void:
 	menu = GameMenu.new()
 	menu.main = self
 	add_child(menu)
+	_show_floor_select() # Milestone 3: pick difficulty before the fight starts
 
 
 func _build_environment() -> void:
@@ -1192,10 +1203,11 @@ func _physics_process(delta: float) -> void:
 			weapon.position = weapon_offset / s
 			weapon_scaled = true
 
-	if not boss_dead and not player_dead:
+	if not boss_dead and not player_dead and not pre_run:
 		run_t += delta
 	_update_auras()
 	_update_boss(delta)
+	_update_hazard(delta)
 	_update_combat(delta)
 	_update_hud()
 
@@ -1284,8 +1296,9 @@ func _ground_boss() -> void:
 
 
 func _update_boss(delta: float) -> void:
-	if boss_dead or not boss_root:
+	if boss_dead or not boss_root or pre_run:
 		return
+	boss_stagger_t = max(0.0, boss_stagger_t - delta)
 	_boss_phase_check()
 	var to := player.global_position - boss_root.global_position
 	to.y = 0
@@ -1301,7 +1314,7 @@ func _update_boss(delta: float) -> void:
 			boss_mat.emission = Color(0.6, 0.5, 0.4)
 
 	var spd_mult := 1.0 + 0.28 * (boss_phase - 1)
-	var dmg_mult := 1.0 + 0.22 * (boss_phase - 1)
+	var dmg_mult := (1.0 + 0.22 * (boss_phase - 1)) * float(DIFF_DMG[difficulty])
 	match boss_state:
 		"idle":
 			if dist > 4.5:
@@ -1340,15 +1353,16 @@ func _update_boss(delta: float) -> void:
 
 # Bump the phase when a health third empties: stagger, roar, escalate.
 func _boss_phase_check() -> void:
-	var frac := boss_hp / BOSS_MAX
+	var frac := boss_hp / boss_max
 	var ph := 1 if frac > 2.0 / 3.0 else (2 if frac > 1.0 / 3.0 else 3)
 	if ph > boss_phase and boss_hp > 0.0:
 		boss_phase = ph
 		boss_state = "recover"; boss_t = PHASE_STAGGER; boss_cd = 0.0
+		boss_stagger_t = PHASE_STAGGER + 0.8 # punish window: boss takes bonus damage
 		slam_ring.visible = false
 		if boss_roar != "":
 			_boss_play(boss_roar)
-		_banner("PHASE %d" % ph)
+		_banner("PHASE %d — STAGGER!" % ph)
 
 
 # Pick an attack by range + phase, set its telegraph + windup + clip.
@@ -1364,7 +1378,7 @@ func _boss_choose(dist: float) -> void:
 	if boss_phase >= 2 and r > 0.82:
 		kind = "quake"
 	boss_kind = kind
-	var wm := 1.0 - 0.12 * (boss_phase - 1)
+	var wm := (1.0 - 0.12 * (boss_phase - 1)) * float(DIFF_WIN[difficulty]) # harder = faster telegraphs
 	match kind:
 		"smash":
 			boss_windup = 0.85 * wm; _telegraph(boss_root.global_position, SMASH_R)
@@ -1505,6 +1519,10 @@ func _hit_boss(dmg: int) -> void:
 		return
 	# Per-floor mastery: +5% damage per prior clear of this floor (C9 proficiency).
 	dmg = int(round(dmg * (1.0 + 0.05 * GameState.floor_mastery(current_floor))))
+	# Stagger punish window (during a phase-transition roar): bonus damage.
+	if boss_stagger_t > 0.0:
+		dmg = int(round(dmg * 1.6))
+		boss_flash = 0.2
 	boss_hp = max(0.0, boss_hp - dmg)
 	boss_flash = 0.12
 	_spawn_damage(boss_root.global_position + Vector3(0, 4.6, 0), dmg)
@@ -1549,19 +1567,13 @@ func _boss_die() -> void:
 
 
 func _continue_run() -> void:
-	if results_layer:
-		results_layer.queue_free(); results_layer = null
-	boss_hp = BOSS_MAX
-	boss_dead = false
-	boss_state = "idle"
-	boss_phase = 1
-	boss_cd = 3.0
-	boss_root.global_position = boss_pos
-	boss_root.visible = true
-	# reset the run score for the next clear
+	# After a clear, reset and return to the floor/difficulty select (lets the player
+	# bump difficulty as they get stronger — the C9-style replay loop).
+	boss_dead = false; boss_state = "idle"; boss_phase = 1
+	boss_root.global_position = boss_pos; boss_root.visible = true
 	run_t = 0.0; run_dmg = 0.0; run_dodges = 0; run_deflect_ok = 0; run_scored = false
-	player_hp = player_max
-	special = 0.0
+	player_hp = player_max; special = 0.0; boss_stagger_t = 0.0
+	_show_floor_select()
 
 
 # C9-style results screen: grade + run stats + loot, then a touch-friendly UPGRADE
@@ -1635,6 +1647,75 @@ func _upgrade(id: String) -> void:
 func _respec() -> void:
 	GameState.respec()
 	_show_results(last_res, last_loot)
+
+
+# Floor entrance / difficulty select (Milestone 3). The boss is paused (pre_run)
+# until a difficulty is chosen — this formalizes the floor session loop.
+func _show_floor_select() -> void:
+	pre_run = true
+	if results_layer:
+		results_layer.queue_free()
+	result_buttons = []
+	results_layer = CanvasLayer.new(); results_layer.layer = 20; add_child(results_layer)
+	var dim := ColorRect.new()
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT); dim.color = Color(0, 0, 0, 0.72)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE; results_layer.add_child(dim)
+	_res_label("FLOOR 1", 0.5, 0.14, 54, Color(1, 0.9, 0.5))
+	_res_label("STONE GOLEM", 0.5, 0.24, 30, Color(0.9, 0.9, 0.95))
+	_res_label("Lv %d   ·   Floor mastery x%d   ·   SP %d   —   choose difficulty" % [GameState.level, GameState.floor_mastery(current_floor), GameState.skill_points], 0.5, 0.33, 19, Color(0.6, 0.95, 1))
+	for i in DIFF_NAMES.size():
+		var d := i
+		var fy := 0.42 + i * 0.115
+		_res_button("%s    (boss HP x%.1f · dmg x%.1f)" % [DIFF_NAMES[i], DIFF_HP[i], DIFF_DMG[i]], Rect2(0.32, fy, 0.36, 0.095), func(): _start_floor(d), true)
+
+
+func _start_floor(d: int) -> void:
+	difficulty = clampi(d, 0, DIFF_NAMES.size() - 1)
+	boss_max = BOSS_MAX * float(DIFF_HP[difficulty])
+	if results_layer:
+		results_layer.queue_free(); results_layer = null
+	result_buttons = []
+	pre_run = false
+	boss_hp = boss_max; boss_dead = false; boss_state = "idle"; boss_phase = 1; boss_cd = 2.5
+	boss_root.global_position = boss_pos; boss_root.visible = true
+	run_t = 0.0; run_dmg = 0.0; run_dodges = 0; run_deflect_ok = 0; run_scored = false
+	player_hp = player_max; special = 0.0; boss_stagger_t = 0.0; hazard_t = 3.5
+	_banner("%s" % DIFF_NAMES[difficulty])
+
+
+# Falling-rock hazard (Hard+): a telegraphed shadow, then a rock drops for AoE.
+func _update_hazard(delta: float) -> void:
+	if difficulty < 1 or pre_run or boss_dead or player_dead:
+		return
+	hazard_t -= delta
+	if hazard_t <= 0.0:
+		hazard_t = 4.2 - difficulty * 0.7
+		_spawn_falling_rock(player.global_position)
+
+
+func _spawn_falling_rock(pos: Vector3) -> void:
+	pos.y = 0.0
+	var sh := MeshInstance3D.new()
+	var c := CylinderMesh.new(); c.top_radius = 1.7; c.bottom_radius = 1.7; c.height = 0.05; c.radial_segments = 24
+	sh.mesh = c
+	var sm := StandardMaterial3D.new(); sm.albedo_color = Color(0.85, 0.1, 0.1, 0.4)
+	sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA; sm.emission_enabled = true; sm.emission = Color(0.8, 0.1, 0.1)
+	sh.material_override = sm; add_child(sh); sh.global_position = pos + Vector3(0, 0.06, 0)
+	var rock := MeshInstance3D.new()
+	var s2 := SphereMesh.new(); s2.radius = 0.8; s2.height = 1.6; rock.mesh = s2
+	var rm := StandardMaterial3D.new(); rm.albedo_color = Color(0.4, 0.36, 0.32); rock.material_override = rm
+	add_child(rock); rock.global_position = pos + Vector3(0, 13, 0)
+	var tw := create_tween()
+	tw.tween_property(rock, "global_position", pos + Vector3(0, 0.8, 0), 0.9).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tw.tween_callback(_rock_land.bind(pos, sh, rock))
+
+
+func _rock_land(pos: Vector3, sh: Node, rock: Node) -> void:
+	if not player_dead and (player.global_position - pos).length() < 1.9:
+		_damage_player(int(round(14 * float(DIFF_DMG[difficulty]))))
+	_spawn_shock(pos, 1.9)
+	if is_instance_valid(sh): sh.queue_free()
+	if is_instance_valid(rock): rock.queue_free()
 
 
 # A translucent unshaded capsule used as a readable i-frame aura on the player.
@@ -2151,7 +2232,7 @@ func _update_hud() -> void:
 	if hud_player_fill:
 		hud_player_fill.size = Vector2(296.0 * (player_hp / player_max), 20)
 	if hud_boss_fill:
-		hud_boss_fill.size = Vector2(596.0 * (boss_hp / BOSS_MAX), 14)
+		hud_boss_fill.size = Vector2(596.0 * (boss_hp / max(1.0, boss_max)), 14)
 	if is_archer:
 		if hud_stamina_fill:
 			hud_stamina_fill.size = Vector2(216.0 * clampf(stamina / STAMINA_MAX, 0.0, 1.0), 8)
