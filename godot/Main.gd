@@ -156,6 +156,15 @@ var cd_explosive := 0.0
 var cd_pierce := 0.0
 var cd_deflect := 0.0
 var cd_storm := 0.0
+# touch controls (web/mobile): left virtual joystick to move, drag elsewhere to look,
+# on-screen buttons for actions. Additive to keyboard/mouse so desktop still works.
+var touch_enabled := false
+var touch_move := Vector2.ZERO  # -1..1 per axis from the joystick
+var joy_active := false
+var joy_knob: Control
+var joy_base: Control
+var touch_buttons: Array = []   # [{ frac: Rect2 (0..1 of screen), cb: Callable }]
+var touch_roles := {}           # touch index -> "joy" | "btn"
 var blocking := false
 var block_t := 0.0      # seconds the current block has been held (for parry window)
 var aiming := false
@@ -460,7 +469,10 @@ func _build_player(pos: Vector3) -> void:
 	cam_rest = cam.position
 	cam_pitch.add_child(cam)
 
-	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	# Capture the mouse for native desktop look. On web/mobile we use drag-to-look +
+	# on-screen buttons instead, so don't grab the pointer (it breaks touch).
+	if not (OS.has_feature("web") or OS.has_feature("mobile")):
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 
 func _build_hud() -> void:
@@ -527,6 +539,95 @@ func _build_hud() -> void:
 	hud_hint.modulate = Color(0.8, 0.85, 0.95)
 	hud_hint.text = "LMB Shot  RMB Power  MMB Aim  1 Spread  2 Volley  3 Explosive  4 Pierce  Q Deflect  X Storm  Space Dodge" if is_archer else "[C] Stats   [I] Inventory   [K] Skills"
 	root.add_child(hud_hint)
+
+	# On web/mobile, add the on-screen touch controls (additive to keyboard/mouse).
+	if OS.has_feature("web") or OS.has_feature("mobile"):
+		touch_enabled = true
+		hud_hint.visible = false
+		_build_touch_ui(root)
+
+
+# On-screen controls for touch devices: a left virtual joystick (move) + action
+# buttons (right). Aiming is automatic toward the boss, so no camera control is
+# needed — clean two-thumb play. All positions are screen FRACTIONS, so the layout
+# scales to any device and the hit-test matches the visuals exactly.
+func _build_touch_ui(root: Control) -> void:
+	# joystick base + knob (bottom-left), anchored ~18% across, ~75% down
+	joy_base = Panel.new()
+	joy_base.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	joy_base.position = Vector2(60, -260); joy_base.size = Vector2(220, 220)
+	joy_base.modulate = Color(1, 1, 1, 0.45)
+	joy_base.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(joy_base)
+	joy_knob = Panel.new()
+	joy_knob.size = Vector2(92, 92); joy_knob.position = Vector2(64, 64)
+	joy_knob.modulate = Color(0.7, 0.85, 1.0, 0.7)
+	joy_knob.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	joy_base.add_child(joy_knob)
+
+	# action buttons (right side), by screen fraction. Archer kit, else basic.
+	if is_archer:
+		_touch_btn(root, "SHOOT", Rect2(0.84, 0.74, 0.14, 0.18), func(): _do_ranged())
+		_touch_btn(root, "POWER", Rect2(0.69, 0.80, 0.12, 0.12), func(): _shot_power())
+		_touch_btn(root, "DODGE", Rect2(0.69, 0.66, 0.12, 0.12), func(): _do_dodge())
+		_touch_btn(root, "SPREAD", Rect2(0.86, 0.58, 0.12, 0.11), func(): _shot_spread())
+		_touch_btn(root, "VOLLEY", Rect2(0.73, 0.52, 0.12, 0.11), func(): _skill_volley())
+		_touch_btn(root, "EXPL", Rect2(0.86, 0.45, 0.12, 0.11), func(): _skill_explosive())
+		_touch_btn(root, "STORM", Rect2(0.73, 0.39, 0.12, 0.11), func(): _special_storm())
+	else:
+		_touch_btn(root, "ATTACK", Rect2(0.84, 0.74, 0.14, 0.18), func(): _do_melee())
+		_touch_btn(root, "DODGE", Rect2(0.69, 0.74, 0.12, 0.14), func(): _do_dodge())
+
+
+func _touch_btn(root: Control, label: String, frac: Rect2, cb: Callable) -> void:
+	var b := Panel.new()
+	b.anchor_left = frac.position.x; b.anchor_top = frac.position.y
+	b.anchor_right = frac.position.x + frac.size.x; b.anchor_bottom = frac.position.y + frac.size.y
+	b.offset_left = 0; b.offset_top = 0; b.offset_right = 0; b.offset_bottom = 0
+	b.modulate = Color(1, 1, 1, 0.5)
+	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var lab := Label.new()
+	lab.text = label; lab.set_anchors_preset(Control.PRESET_FULL_RECT)
+	lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lab.add_theme_font_size_override("font_size", 24)
+	b.add_child(lab)
+	root.add_child(b)
+	touch_buttons.append({"frac": frac, "cb": cb})
+
+
+# Raw multitouch: each touch is the joystick (left side) or a button tap. Aiming is
+# automatic, so there's no look control to conflict with — both thumbs work at once.
+func _input(event: InputEvent) -> void:
+	if not touch_enabled:
+		return
+	var vp := get_viewport().get_visible_rect().size
+	if event is InputEventScreenTouch:
+		var f: Vector2 = event.position / vp
+		if event.pressed:
+			for b in touch_buttons:
+				if (b.frac as Rect2).has_point(f):
+					touch_roles[event.index] = "btn"; (b.cb as Callable).call(); return
+			if f.x < 0.42 and f.y > 0.35: # left-ish lower region = move stick
+				touch_roles[event.index] = "joy"; joy_active = true; _joy_set(event.position, vp)
+		else:
+			if touch_roles.get(event.index, "") == "joy":
+				joy_active = false; touch_move = Vector2.ZERO
+				if joy_knob and joy_base: joy_knob.position = joy_base.size * 0.5 - joy_knob.size * 0.5
+			touch_roles.erase(event.index)
+	elif event is InputEventScreenDrag:
+		if touch_roles.get(event.index, "") == "joy":
+			_joy_set(event.position, vp)
+
+
+func _joy_set(screen_pos: Vector2, vp: Vector2) -> void:
+	var center := joy_base.global_position + joy_base.size * 0.5
+	var rad := vp.x * 0.11
+	var d := screen_pos - center
+	if d.length() > rad: d = d.normalized() * rad
+	touch_move = d / rad
+	if joy_knob and joy_base:
+		joy_knob.position = joy_base.size * 0.5 + (touch_move * (joy_base.size.x * 0.5 - joy_knob.size.x * 0.5)) - joy_knob.size * 0.5
 
 
 func _rect(c: Color, pos: Vector2, sz: Vector2) -> ColorRect:
@@ -899,7 +1000,11 @@ func _archer_anim(dir: Vector3, fwd: Vector3, rgt: Vector3) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed:
+	if touch_enabled:
+		# web/mobile: actions come from on-screen buttons, look from the drag area;
+		# only keep keyboard shortcuts below.
+		pass
+	elif event is InputEventMouseButton and event.pressed:
 		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 		elif event.button_index == MOUSE_BUTTON_LEFT:
@@ -938,6 +1043,12 @@ func _unhandled_input(event: InputEvent) -> void:
 func _physics_process(delta: float) -> void:
 	if not player:
 		return
+	# Touch: auto-orbit the camera to keep the boss in view (aiming is automatic),
+	# so the player only needs the joystick + buttons.
+	if touch_enabled and not player_dead and not boss_dead and boss_root:
+		var tb := boss_root.global_position - player.global_position; tb.y = 0
+		if tb.length() > 0.5:
+			yaw = lerp_angle(yaw, atan2(tb.x, tb.z) + PI, 0.05)
 	cam_yaw.rotation.y = yaw
 	cam_pitch.rotation.x = pitch
 	player_invuln = max(0.0, player_invuln - delta)
@@ -958,10 +1069,13 @@ func _physics_process(delta: float) -> void:
 			dir += rgt
 		if Input.is_physical_key_pressed(KEY_A):
 			dir -= rgt
+		if touch_move.length() > 0.15: # virtual joystick (web/mobile)
+			dir += rgt * touch_move.x - fwd * touch_move.y
 	dir = dir.normalized()
 
-	# Aim (hold middle-mouse): pull the camera in over the shoulder to shoot.
-	aiming = Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE) and not dodging and not player_dead
+	# Aim: hold middle-mouse (desktop) or always while on touch (auto-aim) — keeps the
+	# bow drawn and the camera pulled in.
+	aiming = (Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE) or touch_enabled) and not dodging and not player_dead
 	cam.position = cam.position.lerp(Vector3(0.6, 0.05, 2.3) if aiming else cam_rest, 0.2)
 
 	# Block (hold Q): raising guard cancels an in-progress swing (active-frames
@@ -1580,7 +1694,14 @@ func _fire_arrow(yaw_off: float, mult: float, speed_mult: float, explosive: bool
 		bolt.global_position = bow_node.global_position
 	else:
 		bolt.position = player.global_position + Vector3(0, 1.2, 0)
-	var aim := (-cam.global_transform.basis.z).rotated(Vector3.UP, yaw_off).normalized()
+	# Aim: on touch, auto-aim at the boss (with a little arc lead) so no manual
+	# camera control is needed; on desktop, the camera forward.
+	var base_aim := -cam.global_transform.basis.z
+	if touch_enabled and not boss_dead and boss_root:
+		var tgt := boss_root.global_position + Vector3(0, 2.0, 0)
+		base_aim = (tgt - bolt.global_position)
+		base_aim.y += base_aim.length() * 0.04 # arc compensation
+	var aim := base_aim.normalized().rotated(Vector3.UP, yaw_off)
 	projectiles.append({"mesh": bolt, "vel": aim * v0, "mass": mass,
 		"dmg": int(GameState.weapon_data().get("damage", 0)), "mult": mult,
 		"life": 4.0, "explosive": explosive, "pierce": pierce, "hits": []})
