@@ -95,7 +95,77 @@ var skills := {
 	"dodge":  {"name": "Dodge Roll", "key": "Space", "desc": "Dash with i-frames. Longer / rank.", "unlocked": true, "rank": 0, "max_rank": 3, "cost": 1},
 	"block":  {"name": "Block / Parry", "key": "Q", "desc": "Reduce incoming damage. Better / rank.", "unlocked": true, "rank": 0, "max_rank": 3, "cost": 1},
 	"ranged": {"name": "Bow Shot", "key": "MMB", "desc": "Kinetic arrow. Faster launch / rank.", "unlocked": true, "rank": 0, "max_rank": 3, "cost": 1},
+	# Archer ability ranks (applied in Main via _archer_rank). Cheap, deep investment.
+	"spread":    {"name": "Spread Shot", "key": "1", "desc": "+1 arrow per rank.", "unlocked": true, "rank": 0, "max_rank": 4, "cost": 1, "req_level": 1},
+	"volley":    {"name": "Volley", "key": "2", "desc": "+1 arrow & faster cooldown / rank.", "unlocked": true, "rank": 0, "max_rank": 4, "cost": 1, "req_level": 2},
+	"explosive": {"name": "Explosive Arrow", "key": "3", "desc": "+blast radius & damage / rank.", "unlocked": true, "rank": 0, "max_rank": 4, "cost": 1, "req_level": 3},
+	"pierce":    {"name": "Piercing Bolt", "key": "4", "desc": "+damage / rank.", "unlocked": true, "rank": 0, "max_rank": 4, "cost": 1, "req_level": 4},
+	"deflect":   {"name": "Deflect", "key": "Q", "desc": "Longer i-frame window / rank.", "unlocked": true, "rank": 0, "max_rank": 3, "cost": 1, "req_level": 2},
+	"storm":     {"name": "Arrow Storm", "key": "X", "desc": "+arrows & faster meter / rank.", "unlocked": true, "rank": 0, "max_rank": 3, "cost": 1, "req_level": 5},
 }
+
+# Per-floor mastery: clears[floor] -> count; grants a small floor-local damage buff.
+var floor_clears := {}
+const SAVE_PATH := "user://bossraid_save.json"
+
+# Rank of an archer ability (0 if unknown). Main reads this to scale abilities.
+func skill_rank(id: String) -> int:
+	return int(skills[id]["rank"]) if skills.has(id) else 0
+
+func floor_mastery(floor_id: int) -> int:
+	return int(floor_clears.get(floor_id, 0))
+
+func add_floor_clear(floor_id: int) -> void:
+	floor_clears[floor_id] = floor_mastery(floor_id) + 1
+	save()
+
+# Free respec: refund every spent point and zero the ranks (C9's anti-frustration
+# lever — experiment freely).
+func respec() -> void:
+	for id in skills:
+		var s: Dictionary = skills[id]
+		if int(s["cost"]) > 0:
+			skill_points += int(s["rank"]) * int(s["cost"])
+			s["rank"] = 0
+	save()
+
+# A skill can only be ranked if the player meets its level requirement.
+func level_ok(id: String) -> bool:
+	return level >= int(skills.get(id, {}).get("req_level", 1))
+
+
+func save() -> void:
+	var ranks := {}
+	for id in skills:
+		ranks[id] = int(skills[id]["rank"])
+	var data := {
+		"level": level, "skill_points": skill_points, "ranks": ranks,
+		"owned_weapons": owned_weapons, "owned_armors": owned_armors, "owned_boots": owned_boots,
+		"weapon": weapon, "armor": armor, "boot": boot, "floor_clears": floor_clears,
+	}
+	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(data)); f.close()
+
+
+func load_save() -> void:
+	if not FileAccess.file_exists(SAVE_PATH):
+		return
+	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	if not f: return
+	var txt := f.get_as_text(); f.close()
+	var data = JSON.parse_string(txt)
+	if typeof(data) != TYPE_DICTIONARY: return
+	level = int(data.get("level", level))
+	skill_points = int(data.get("skill_points", skill_points))
+	var ranks: Dictionary = data.get("ranks", {})
+	for id in ranks:
+		if skills.has(id):
+			skills[id]["rank"] = clampi(int(ranks[id]), 0, int(skills[id]["max_rank"]))
+	owned_weapons = data.get("owned_weapons", owned_weapons)
+	owned_armors = data.get("owned_armors", owned_armors)
+	owned_boots = data.get("owned_boots", owned_boots)
+	floor_clears = data.get("floor_clears", {})
 
 
 func current() -> Dictionary:
@@ -197,8 +267,14 @@ func use_consumable(id: String) -> int:
 
 
 # Can the player unlock (if locked) or rank up (if not maxed) this skill?
+func _ready() -> void:
+	load_save()
+
+
 func can_afford(id: String) -> bool:
 	if not skills.has(id):
+		return false
+	if not level_ok(id):
 		return false
 	var s: Dictionary = skills[id]
 	if not bool(s["unlocked"]):
@@ -218,12 +294,14 @@ func unlock_or_rank(id: String) -> bool:
 		s["unlocked"] = true
 	else:
 		s["rank"] = int(s["rank"]) + 1
+	save()
 	return true
 
 
 func grant_boss_reward() -> void:
 	level += 1
 	skill_points += SP_PER_BOSS
+	save()
 
 
 # ~60% chance to drop an unowned gear piece; otherwise a Health Potion.
