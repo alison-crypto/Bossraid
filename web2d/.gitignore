@@ -20,3 +20,5 @@ previews/*
 !previews/proof.html
 !previews/proof_match.png
 !previews/proof_handsocket_fails.png
+!previews/live_aim.png
+!previews/live_draw.png
