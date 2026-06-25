@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Bow attach — proof</title>
+<style>body{margin:0;background:#0b0b10;color:#e7ecf5;font-family:system-ui,sans-serif;text-align:center;padding:16px 12px 60px}
+h1{font-size:18px;margin:6px 0}.sub{color:#8a93a6;font-size:12px;margin-bottom:10px}.card{max-width:420px;margin:16px auto}
+img{width:100%;border-radius:10px;border:1px solid #2a2c36}.cap{font-size:13px;margin-top:6px}.good{color:#7fd18f}.bad{color:#e08a8a}</style></head><body>
+<h1>Bow attach — the proof</h1>
+<div class="card"><img src="proof_match.png?v=1"><div class="cap good">✓ Hip-stable socket (right) MATCHES the built-in reference (left) — vertical &amp; correct on idle-aim / walk / draw.</div></div>
+<div class="card"><img src="proof_handsocket_fails.png?v=1"><div class="cap bad">✗ Pure hand-socket (right) goes horizontal on aim vs the reference (left) — Mixamo's bow-hand orientation is inconsistent across clips.</div></div>
+<div class="sub">Conclusion: attach (socket), orientation anchored to a stable bone. No skinning needed for the hold. Ports to Godot. Flex = separate later feature.</div>
+</body></html>
