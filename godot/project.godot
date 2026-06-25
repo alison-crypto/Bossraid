@@ -15,7 +15,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 [application]
 
 config/name="Bossraid"
-run/main_scene="res://Select.tscn"
+run/main_scene="res://Main.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
 
@@ -27,7 +27,19 @@ GameState="*res://GameState.gd"
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/handheld/orientation="landscape"
+
+[input_devices]
+
+pointing/emulate_touch_from_mouse=true
+pointing/emulate_mouse_from_touch=false
 
 [rendering]
 
+# Web/mobile need the Compatibility (WebGL2) backend — Forward+ on web requires
+# WebGPU, which mobile browsers don't reliably support. Keep desktop on Forward+.
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.windows="forward_plus"
 environment/defaults/default_clear_color=Color(0.62, 0.71, 0.85, 1)

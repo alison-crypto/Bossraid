@@ -13,7 +13,7 @@ var characters := [
 	{"name": "Maria", "file": "res://models/Maria.glb", "flip": false, "weapon": false, "str": 10, "dex": 12, "con": 10},
 	{"name": "Erika Archer", "file": "res://models/erika_bow_final.glb", "flip": false, "weapon": false, "default_weapon": 5, "str": 8, "dex": 14, "con": 9},
 ]
-var selected := 0
+var selected := 3 # default to Erika Archer (the built-out hero) for direct launch
 
 # Weapons. light = combo of merged clip names (cycled per click), heavy = one
 # clip. damage = flat weapon damage added to the force term. speed scales swing
