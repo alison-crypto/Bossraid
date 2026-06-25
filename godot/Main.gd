@@ -1058,44 +1058,48 @@ func _archer_anim(dir: Vector3, fwd: Vector3, rgt: Vector3) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# Touch uses the on-screen buttons (handled in _input); skip action triggers here.
 	if touch_enabled:
-		# web/mobile: actions come from on-screen buttons, look from the drag area;
-		# only keep keyboard shortcuts below.
-		pass
-	elif event is InputEventMouseButton and event.pressed:
-		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
-			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
-		elif event.button_index == MOUSE_BUTTON_LEFT:
-			if is_archer:
-				_do_ranged() # archer: quick shot
-			elif aiming:
-				_do_ranged() # while aiming, left-click shoots
-			else:
-				_do_melee()
-		elif event.button_index == MOUSE_BUTTON_RIGHT:
-			if is_archer:
-				_shot_power() # archer: power shot
-			else:
-				_do_heavy()
-	elif is_archer and event is InputEventKey and event.pressed and not event.echo and _archer_key(event.keycode):
-		pass # handled in _archer_key
-	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_SPACE:
-		_do_dodge()
-	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F:
-		_do_kick()
-	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_TAB:
-		equip_weapon_owned(_cycle_owned(GameState.owned_weapons, GameState.weapon))
-	elif event is InputEventKey and event.pressed and not event.echo and event.keycode >= KEY_1 and event.keycode <= KEY_6:
-		equip_weapon_owned(event.keycode - KEY_1)
-	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_R:
-		equip_armor_owned(_cycle_owned(GameState.owned_armors, GameState.armor))
-	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_T:
-		equip_boots_owned(_cycle_owned(GameState.owned_boots, GameState.boot))
-	elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		return
+	# Desktop: a click while the pointer is free re-captures it (doesn't fire).
+	if event is InputEventMouseButton and event.pressed and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+		return
+	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		yaw -= event.relative.x * MOUSE_SENS
 		pitch = clamp(pitch - event.relative.y * MOUSE_SENS, -1.2, 0.5)
+
+	# Combat via named actions (keyboard + mouse + gamepad).
+	if not player_dead:
+		if event.is_action_pressed("quick_shot"):
+			if is_archer or aiming: _do_ranged()
+			else: _do_melee()
+		elif event.is_action_pressed("power_shot"):
+			_shot_power() if is_archer else _do_heavy()
+		elif event.is_action_pressed("dodge"):
+			_do_dodge()
+		elif is_archer and event.is_action_pressed("deflect"):
+			_skill_deflect()
+		elif is_archer and event.is_action_pressed("ab_spread"):
+			_shot_spread()
+		elif is_archer and event.is_action_pressed("ab_volley"):
+			_skill_volley()
+		elif is_archer and event.is_action_pressed("ab_explosive"):
+			_skill_explosive()
+		elif is_archer and event.is_action_pressed("ab_pierce"):
+			_skill_pierce()
+		elif is_archer and event.is_action_pressed("arrow_storm"):
+			_special_storm()
+
+	# Non-archer legacy (kick / gear cycle) — not core to the archer build.
+	if not is_archer and event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_F: _do_kick()
+		elif event.keycode == KEY_TAB: equip_weapon_owned(_cycle_owned(GameState.owned_weapons, GameState.weapon))
+		elif event.keycode >= KEY_1 and event.keycode <= KEY_6: equip_weapon_owned(event.keycode - KEY_1)
+		elif event.keycode == KEY_R: equip_armor_owned(_cycle_owned(GameState.owned_armors, GameState.armor))
+		elif event.keycode == KEY_T: equip_boots_owned(_cycle_owned(GameState.owned_boots, GameState.boot))
 
 
 func _physics_process(delta: float) -> void:
@@ -1119,14 +1123,9 @@ func _physics_process(delta: float) -> void:
 	rgt = rgt.normalized()
 	var dir := Vector3.ZERO
 	if not player_dead:
-		if Input.is_physical_key_pressed(KEY_W):
-			dir += fwd
-		if Input.is_physical_key_pressed(KEY_S):
-			dir -= fwd
-		if Input.is_physical_key_pressed(KEY_D):
-			dir += rgt
-		if Input.is_physical_key_pressed(KEY_A):
-			dir -= rgt
+		# Keyboard (WASD) + gamepad left stick via the named action vector.
+		var mv := Input.get_vector("move_left", "move_right", "move_up", "move_down")
+		dir += rgt * mv.x - fwd * mv.y
 		if touch_move.length() > 0.15: # virtual joystick (web/mobile)
 			dir += rgt * touch_move.x - fwd * touch_move.y
 	dir = dir.normalized()
@@ -1893,14 +1892,8 @@ func _do_dodge() -> void:
 	fwd = fwd.normalized()
 	rgt = rgt.normalized()
 	var d := Vector3.ZERO
-	if Input.is_physical_key_pressed(KEY_W):
-		d += fwd
-	if Input.is_physical_key_pressed(KEY_S):
-		d -= fwd
-	if Input.is_physical_key_pressed(KEY_D):
-		d += rgt
-	if Input.is_physical_key_pressed(KEY_A):
-		d -= rgt
+	var mv := Input.get_vector("move_left", "move_right", "move_up", "move_down") # keyboard+stick
+	d += rgt * mv.x - fwd * mv.y
 	if touch_move.length() > 0.15: # joystick direction on touch
 		d += rgt * touch_move.x - fwd * touch_move.y
 	dodge_dir = d.normalized() if d.length() > 0.1 else fwd
