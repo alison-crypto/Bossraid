@@ -760,10 +760,12 @@ func _setup_animation() -> void:
 		a_strafe_l  = AnimUtil.merge(anim, skel, AD + "strafe_left.fbx", "AStrafeL")
 		a_strafe_r  = AnimUtil.merge(anim, skel, AD + "strafe_right.fbx", "AStrafeR")
 		a_shoot     = AnimUtil.merge(anim, skel, AD + "shoot.fbx", "AShoot")
-		a_roll      = AnimUtil.merge(anim, skel, AD + "roll.fbx", "ARoll")
-		a_dodge_l   = AnimUtil.merge(anim, skel, AD + "dodge_left.fbx", "ADodgeL")
-		a_dodge_r   = AnimUtil.merge(anim, skel, AD + "dodge_right.fbx", "ADodgeR")
-		a_dodge_b   = AnimUtil.merge(anim, skel, AD + "dodge_back.fbx", "ADodgeB")
+		# Dodge clips KEEP the hips rotation (true) so the roll actually tumbles/leans
+		# instead of playing as an upright flail (the tumble lives in the root bone).
+		a_roll      = AnimUtil.merge(anim, skel, AD + "roll.fbx", "ARoll", true)
+		a_dodge_l   = AnimUtil.merge(anim, skel, AD + "dodge_left.fbx", "ADodgeL", true)
+		a_dodge_r   = AnimUtil.merge(anim, skel, AD + "dodge_right.fbx", "ADodgeR", true)
+		a_dodge_b   = AnimUtil.merge(anim, skel, AD + "dodge_back.fbx", "ADodgeB", true)
 		a_hit       = AnimUtil.merge(anim, skel, AD + "hit.fbx", "AHit")
 		a_death     = AnimUtil.merge(anim, skel, AD + "death.fbx", "ADeath")
 		for n in [a_idle, a_run, a_walk, a_walk_back, a_strafe_l, a_strafe_r]:
@@ -1171,7 +1173,9 @@ func _physics_process(delta: float) -> void:
 	# Aim: hold middle-mouse (desktop) or always while on touch (auto-aim) — keeps the
 	# bow drawn and the camera pulled in.
 	aiming = (Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE) or touch_enabled) and not dodging and not player_dead
-	cam.position = cam.position.lerp(Vector3(0.6, 0.05, 2.3) if aiming else cam_rest, 0.2)
+	# Aim cam sits over the LEFT shoulder (-X): the bow is held in the left hand, so a
+	# right-shoulder cam pushed it off the target; left-shoulder lines the bow up on it.
+	cam.position = cam.position.lerp(Vector3(-0.7, 0.1, 2.3) if aiming else cam_rest, 0.2)
 
 	# Block (hold Q): raising guard cancels an in-progress swing (active-frames
 	# rule). Can't block mid-dodge/aim. block_t feeds the parry window.

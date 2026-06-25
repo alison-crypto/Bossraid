@@ -12,7 +12,10 @@ extends RefCounted
 # Load the first animation from an external .glb and add it to `target_anim`'s
 # default library as `new_name`, remapped onto `target_skel`. Returns the added
 # clip name, or "" on failure.
-static func merge(target_anim: AnimationPlayer, target_skel: Skeleton3D, glb_path: String, new_name: String) -> String:
+# keep_root_rot: normally the root/hips rotation is dropped so a clip can't fight
+# the gameplay-driven facing. For one-shot DODGE clips (rolls), the tumble IS the
+# hips rotation, so pass true to keep it — the character actually rolls/leans.
+static func merge(target_anim: AnimationPlayer, target_skel: Skeleton3D, glb_path: String, new_name: String, keep_root_rot: bool = false) -> String:
 	if target_anim == null or target_skel == null:
 		return ""
 	var scene = load(glb_path)
@@ -70,7 +73,7 @@ static func merge(target_anim: AnimationPlayer, target_skel: Skeleton3D, glb_pat
 		# are only taken from the root, vertical-only: that lets crouched poses
 		# lower the hips (feet stay grounded) without horizontal drift or letting
 		# a different rig's bone lengths stretch the limbs.
-		if ttype == Animation.TYPE_ROTATION_3D and is_root:
+		if ttype == Animation.TYPE_ROTATION_3D and is_root and not keep_root_rot:
 			continue
 		if ttype == Animation.TYPE_POSITION_3D and not is_root:
 			continue
