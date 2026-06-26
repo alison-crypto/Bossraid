@@ -162,6 +162,7 @@ const CHARGE_DMG := 2.6   # full-charge damage multiplier
 const CHARGE_SPD := 1.65  # full-charge launch-speed multiplier (longer range)
 var charging := false
 var charge_t := 0.0
+var charge_glow: MeshInstance3D  # soft additive orb on the bow grip while drawing a charge
 var player_hit_t := 0.0 # seconds left on the hit flinch
 # archer ability runtime: stamina, special meter (0..1), per-skill cooldowns
 var stamina := STAMINA_MAX
@@ -1312,6 +1313,7 @@ func _physics_process(delta: float) -> void:
 					nock_arrow.scale = Vector3.ONE * nock_base_scale * cgrow
 				else:
 					nock_arrow.visible = false
+		_update_charge_glow()
 	# Animation state: swings/dodge play their own one-shots; otherwise the archer
 	# uses its dedicated state machine, else block pose / idle-run locomotion.
 	if not attacking and not dodging:
@@ -2183,6 +2185,9 @@ func _charge_release() -> void:
 	_play_shoot()
 	stamina -= lerpf(STA_QUICK, STA_POWER, p); sta_regen_t = STA_REGEN_DELAY
 	_fire_arrow(0.0, lerpf(1.0, CHARGE_DMG, p), lerpf(1.0, CHARGE_SPD, p), false, false)
+	_bow_release_fx(p)
+	if charge_glow and is_instance_valid(charge_glow):
+		charge_glow.visible = false
 
 
 func _do_ranged() -> void:
@@ -2341,6 +2346,53 @@ func _impact_fx(pos: Vector3, power: float) -> void:
 		t2.tween_property(sh, "scale", Vector3.ONE * 0.4, dur)
 		t2.tween_property(smat, "albedo_color:a", 0.0, dur)
 		t2.chain().tween_callback(sh.queue_free)
+
+
+# Soft additive orb on the bow grip that grows + brightens as the draw builds power;
+# hidden (reused, not freed) whenever not charging. Called every frame for the archer.
+func _update_charge_glow() -> void:
+	if not (charging and is_archer and bow_node and is_instance_valid(bow_node)):
+		if charge_glow and is_instance_valid(charge_glow):
+			charge_glow.visible = false
+		return
+	var p: float = clampf(charge_t / CHARGE_MAX, 0.0, 1.0)
+	if charge_glow == null or not is_instance_valid(charge_glow):
+		charge_glow = MeshInstance3D.new()
+		var gm := SphereMesh.new(); gm.radius = 0.08; gm.height = 0.16; charge_glow.mesh = gm
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		charge_glow.material_override = mat
+		add_child(charge_glow)
+	charge_glow.visible = true
+	charge_glow.global_position = bow_node.global_position
+	charge_glow.scale = Vector3.ONE * (0.5 + p * 1.7)
+	var m := charge_glow.material_override as StandardMaterial3D
+	# warm gold deepening to bright white-gold as it tops out
+	m.albedo_color = Color(1.0, 0.85 + 0.13 * p, 0.45 + 0.45 * p, 0.22 + 0.55 * p)
+
+
+# Release burst at the bow when a charged shot fires (scaled by charge fraction).
+# Tap shots (tiny p) skip it so only a real draw gets the payoff flash.
+func _bow_release_fx(power: float) -> void:
+	if not (bow_node and is_instance_valid(bow_node)):
+		return
+	var p: float = clampf(power, 0.0, 1.0)
+	if p < 0.12:
+		return
+	var s := MeshInstance3D.new()
+	var sm := SphereMesh.new(); sm.radius = 0.12; sm.height = 0.24; s.mesh = sm
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.albedo_color = Color(1.0, 0.95, 0.7, 0.55 + 0.35 * p)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	s.material_override = mat; add_child(s); s.global_position = bow_node.global_position
+	var tw := create_tween(); tw.set_parallel(true)
+	tw.tween_property(s, "scale", Vector3.ONE * (1.6 + 3.2 * p), 0.15)
+	tw.tween_property(mat, "albedo_color:a", 0.0, 0.15)
+	tw.chain().tween_callback(s.queue_free)
 
 
 func _update_combat(delta: float) -> void:
