@@ -636,6 +636,9 @@ func _build_touch_ui(root: Control) -> void:
 	joy_knob.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	joy_base.add_child(joy_knob)
 
+	# Menu (hamburger) button, top-right under the minimap -> opens Stats/Inv/Skills.
+	_touch_btn(root, "MENU", Rect2(0.905, 0.31, 0.075, 0.08), func(): if menu: menu.toggle("stats"))
+
 	# action buttons (right side), by screen fraction. Archer kit, else basic.
 	if is_archer:
 		_touch_btn(root, "SHOOT", Rect2(0.84, 0.74, 0.14, 0.18), func(): _charge_start(), func(): _charge_release())
