@@ -134,6 +134,9 @@ var dodge_dir := Vector3.FORWARD
 # 3D-rendered archer clip set + state machine instead of the generic melee one.
 var is_archer := false
 var aim_mod: ArcherAimModifier # upper-body pitch so the bow tracks the target's height
+var nock_arrow: Node3D   # arrow drawn on the bow while aiming (points at the target)
+var nock_hide_t := 0.0   # briefly hide the nocked arrow right after a shot (it "left")
+var rhand_bone := -1     # right (draw) hand bone = the nock anchor
 const AIM_HOLD_T := 0.52 # frame of the draw clip where the bow points dead at the target
 var a_idle := ""
 var a_aim := ""        # held aim/draw pose (draw clip frozen at AIM_HOLD_T)
@@ -783,6 +786,18 @@ func _setup_animation() -> void:
 		# target's height (the bow holds level otherwise -> misses airborne/tall bosses).
 		aim_mod = ArcherAimModifier.new()
 		skel.add_child(aim_mod)
+		# A drawn arrow on the bow while aiming: nocked at the draw hand, pointing at the
+		# target so the bow's "front" visibly lines up on the boss (the two match).
+		rhand_bone = skel.find_bone("mixamorig_RightHand")
+		var na = load("res://models/weapons/arrow1.glb")
+		if na:
+			nock_arrow = na.instantiate()
+			add_child(nock_arrow)
+			var asz: Vector3 = _aabb_of(nock_arrow).size
+			var along: float = max(asz.x, max(asz.y, asz.z))
+			if along > 0.0:
+				nock_arrow.scale = Vector3.ONE * (0.85 / along)
+			nock_arrow.visible = false
 		print("Bossraid: archer clips idle=", a_idle, " aim=", a_aim, " run=", a_run, " shoot=", a_shoot, " roll=", a_roll)
 	if idle_anim == "" and list.size() > 0:
 		idle_anim = list[0]
@@ -1240,6 +1255,18 @@ func _physics_process(delta: float) -> void:
 		if want_aim:
 			aim_mod.aim_target = _aim_target_pos()
 		aim_mod.blend = move_toward(aim_mod.blend, 1.0 if want_aim else 0.0, delta * 6.0)
+		# Nocked arrow: tail at the draw hand, tip pointing at the target (the shot line).
+		nock_hide_t = maxf(0.0, nock_hide_t - delta)
+		if nock_arrow:
+			var show_nock := want_aim and nock_hide_t <= 0.0 and rhand_bone >= 0 and skel
+			nock_arrow.visible = show_nock
+			if show_nock:
+				var tail: Vector3 = (skel.global_transform * skel.get_bone_global_pose(rhand_bone)).origin
+				var ndir: Vector3 = (_aim_target_pos() - tail)
+				if ndir.length() > 0.05:
+					ndir = ndir.normalized()
+					nock_arrow.global_position = tail + ndir * 0.42
+					nock_arrow.look_at(nock_arrow.global_position - ndir, Vector3.UP)
 	# Animation state: swings/dodge play their own one-shots; otherwise the archer
 	# uses its dedicated state machine, else block pose / idle-run locomotion.
 	if not attacking and not dodging:
@@ -2032,6 +2059,7 @@ func _play_shoot() -> void:
 # Spawn one arrow. yaw_off fans it around world-up (spread/volley); mult scales the
 # impact damage; speed_mult scales launch speed; explosive/pierce tag its behaviour.
 func _fire_arrow(yaw_off: float, mult: float, speed_mult: float, explosive: bool, pierce: bool) -> void:
+	nock_hide_t = 0.18 # the nocked arrow just flew off -> hide it, re-nock shortly after
 	var mass := _arrow_mass()
 	var v0 := _arrow_v0() * speed_mult
 	var bolt: Node3D
