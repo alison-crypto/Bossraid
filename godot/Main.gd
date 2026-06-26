@@ -2303,6 +2303,46 @@ func _explode(pos: Vector3) -> void:
 	tw.chain().tween_callback(s.queue_free)
 
 
+# Arrow impact pop: a central additive flash + a burst of small shards flung outward,
+# scaled by the shot's power (charged shots punch bigger). All unshaded-additive +
+# tween, the same compat-safe tech as _explode (no GPU/CPU particle system).
+func _impact_fx(pos: Vector3, power: float) -> void:
+	var p: float = clampf(power, 1.0, 2.8)
+	# central flash
+	var s := MeshInstance3D.new()
+	var sm := SphereMesh.new(); sm.radius = 0.13; sm.height = 0.26; s.mesh = sm
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.albedo_color = Color(1.0, 0.86, 0.55, 1.0)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	s.material_override = mat; add_child(s); s.global_position = pos
+	var tw := create_tween(); tw.set_parallel(true)
+	tw.tween_property(s, "scale", Vector3.ONE * (1.8 + p), 0.18)
+	tw.tween_property(mat, "albedo_color:a", 0.0, 0.18)
+	tw.chain().tween_callback(s.queue_free)
+	# spark shards flung outward + up, easing out (air-drag feel) then fading
+	var shards := int(7 + p * 3)
+	for k in shards:
+		var ang := TAU * (float(k) + randf() * 0.6) / float(shards)
+		var dir := Vector3(cos(ang), 0.55 + randf() * 1.0, sin(ang)).normalized()
+		var sh := MeshInstance3D.new()
+		var shm := SphereMesh.new(); shm.radius = 0.035; shm.height = 0.07; sh.mesh = shm
+		var smat := StandardMaterial3D.new()
+		smat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		smat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		smat.albedo_color = Color(1.0, 0.80, 0.42, 1.0)
+		smat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		sh.material_override = smat; add_child(sh); sh.global_position = pos
+		var dist := (0.45 + randf() * 0.5) * p
+		var dur := 0.22 + randf() * 0.12
+		var t2 := create_tween(); t2.set_parallel(true)
+		t2.tween_property(sh, "global_position", pos + dir * dist + Vector3.DOWN * 0.12, dur).set_ease(Tween.EASE_OUT)
+		t2.tween_property(sh, "scale", Vector3.ONE * 0.4, dur)
+		t2.tween_property(smat, "albedo_color:a", 0.0, dur)
+		t2.chain().tween_callback(sh.queue_free)
+
+
 func _update_combat(delta: float) -> void:
 	melee_cd = max(0.0, melee_cd - delta)
 	ranged_cd = max(0.0, ranged_cd - delta)
@@ -2350,17 +2390,23 @@ func _update_combat(delta: float) -> void:
 		var done := false
 		# pierce arrows pass through (one hit per target, tracked in p.hits); explosive
 		# arrows detonate an AoE; plain arrows stop on first hit.
+		var pwr := float(p.get("mult", 1.0))
 		if p.mesh.position.distance_to(dcenter) < 0.7 and not ("dummy" in p.hits):
 			_hit_dummy(ke_dmg); p.hits.append("dummy")
 			if p.explosive: _explode(p.mesh.position); done = true
-			elif not p.pierce: done = true
+			else: _impact_fx(p.mesh.position, pwr)
+			if not p.pierce and not p.explosive: done = true
 		elif not boss_dead and p.mesh.position.distance_to(bcenter) < 2.2 and not ("boss" in p.hits):
 			_hit_boss(ke_dmg); p.hits.append("boss")
 			if p.explosive: _explode(p.mesh.position); done = true
-			elif not p.pierce: done = true
+			else: _impact_fx(p.mesh.position, pwr)
+			if not p.pierce and not p.explosive: done = true
 		if not done and p.explosive and p.mesh.position.y < 0.0:
 			_explode(p.mesh.position); done = true
 		if done or p.life <= 0.0 or p.mesh.position.y < 0.0:
+			# A non-explosive arrow that simply lands (no target) kicks up a small dust pop.
+			if not p.explosive and p.mesh.position.y < 0.0 and not ("dummy" in p.hits) and not ("boss" in p.hits):
+				_impact_fx(Vector3(p.mesh.position.x, 0.02, p.mesh.position.z), pwr * 0.5)
 			p.mesh.queue_free()
 			projectiles.remove_at(i)
 
