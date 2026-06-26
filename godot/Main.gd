@@ -138,6 +138,7 @@ var nock_arrow: Node3D   # arrow drawn on the bow while aiming (points at the ta
 var nock_hide_t := 0.0   # briefly hide the nocked arrow right after a shot (it "left")
 var rhand_bone := -1     # right (draw) hand bone = the nock anchor
 const AIM_HOLD_T := 0.52 # frame of the draw clip where the bow points dead at the target
+const AIM_BLADE := -1.466 # body bladed ~ -84deg off the target while aiming (real archer stance)
 var a_idle := ""
 var a_aim := ""        # held aim/draw pose (draw clip frozen at AIM_HOLD_T)
 var a_run := ""
@@ -753,11 +754,10 @@ func _setup_animation() -> void:
 	if is_archer and skel:
 		const AD := "res://models/anim/archer/"
 		a_idle      = AnimUtil.merge(anim, skel, AD + "idle.fbx", "AIdle")
-		# Aim hold = the DRAW clip held at its forward-aim frame (AIM_HOLD_T). idle_aim
-		# holds the bow ~90 deg to the SIDE (the "shoots sideways" bug); the draw motion
-		# passes through a dead-on forward aim mid-clip (fore-arm ~0 deg to target) before
-		# settling sideways, so we freeze it there instead of looping it.
-		a_aim       = AnimUtil.merge(anim, skel, AD + "draw.fbx", "AAim")
+		# Aim hold = idle_aim, the SIDE-arm draw pose. With the body bladed ~ -84deg (AIM_BLADE)
+		# that side-held bow lines up on the target with no shoulder twist; ArcherAimModifier
+		# then leans for height + turns the head. (A square body made this look "sideways".)
+		a_aim       = AnimUtil.merge(anim, skel, AD + "idle_aim.fbx", "AAim")
 		a_run       = AnimUtil.merge(anim, skel, AD + "run.fbx", "ARun")
 		a_walk      = AnimUtil.merge(anim, skel, AD + "walk.fbx", "AWalk")
 		a_walk_back = AnimUtil.merge(anim, skel, AD + "walk_back.fbx", "AWalkBack")
@@ -1242,6 +1242,10 @@ func _physics_process(delta: float) -> void:
 		else:
 			face_dir = fwd
 		var target := atan2(face_dir.x, face_dir.z) + (PI if face_flip else 0.0)
+		# Archery stance: blade the body off the target line (real archer stands sideways);
+		# the arm/head/bow modifier aims AT the target on top, camera stays on the boss.
+		if is_archer and aim_locked and aiming and not dodging and _target_valid():
+			target += AIM_BLADE
 		# Snap harder when locked on so the bow stays pointed at the target; softer
 		# otherwise so free movement turns read smoothly.
 		var face_rate := 0.5 if (is_archer and aim_locked and not dodging and _target_valid()) else 0.25
