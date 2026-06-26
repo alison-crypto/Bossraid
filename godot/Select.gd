@@ -1,7 +1,7 @@
 # Character-select screen. Shows a live 3D preview of the highlighted character
 # playing a boxing/fight-idle clip (so they aren't standing in a T-pose), with a
-# button per character. Picking one stores it in GameState and loads the arena.
-extends Control
+# button per character. Tap previews; Enter confirms -> Boss Select.
+extends UIScreen
 
 var viewport: SubViewport
 var preview_world: Node3D
@@ -47,7 +47,7 @@ func _ready() -> void:
 		b.custom_minimum_size = Vector2(320, 52)
 		b.focus_mode = Control.FOCUS_NONE
 		b.mouse_entered.connect(_show_character.bind(i))
-		b.pressed.connect(_on_pick.bind(i))
+		b.pressed.connect(_show_character.bind(i)) # tap = preview/select; Enter confirms
 		vb.add_child(b)
 		buttons.append(b)
 
@@ -156,4 +156,4 @@ func _process(delta: float) -> void:
 
 func _on_pick(i: int) -> void:
 	GameState.selected = i
-	get_tree().change_scene_to_file("res://Main.tscn")
+	get_tree().change_scene_to_file("res://BossSelect.tscn")
