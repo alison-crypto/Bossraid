@@ -14,6 +14,7 @@ var characters := [
 	{"name": "Erika Archer", "file": "res://models/erika_bow_final.glb", "flip": false, "weapon": false, "default_weapon": 5, "str": 8, "dex": 14, "con": 9},
 ]
 var selected := 3 # default to Erika Archer (the built-out hero) for direct launch
+var user := "Alison" # logged-in profile (set on the Login screen)
 
 # Weapons. light = combo of merged clip names (cycled per click), heavy = one
 # clip. damage = flat weapon damage added to the force term. speed scales swing
