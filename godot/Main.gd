@@ -1255,18 +1255,22 @@ func _physics_process(delta: float) -> void:
 		if want_aim:
 			aim_mod.aim_target = _aim_target_pos()
 		aim_mod.blend = move_toward(aim_mod.blend, 1.0 if want_aim else 0.0, delta * 6.0)
-		# Nocked arrow: tail at the draw hand, tip pointing at the target (the shot line).
+		# Nocked arrow: sits flush on the bow grip, pointing along the shot line at the boss.
 		nock_hide_t = maxf(0.0, nock_hide_t - delta)
 		if nock_arrow:
-			var show_nock := want_aim and nock_hide_t <= 0.0 and rhand_bone >= 0 and skel
+			var show_nock := want_aim and nock_hide_t <= 0.0 and bow_node and is_instance_valid(bow_node)
 			nock_arrow.visible = show_nock
 			if show_nock:
-				var tail: Vector3 = (skel.global_transform * skel.get_bone_global_pose(rhand_bone)).origin
-				var ndir: Vector3 = (_aim_target_pos() - tail)
-				if ndir.length() > 0.05:
+				# anchor ON the bow grip (where arrows spawn), run along grip->boss: flush on
+				# the bow AND on the target. Tip just past the grip; nock trails to the hand.
+				var grip: Vector3 = bow_node.global_position
+				var ndir: Vector3 = (_aim_target_pos() - grip)
+				if ndir.length() > 0.1:
 					ndir = ndir.normalized()
-					nock_arrow.global_position = tail + ndir * 0.42
+					nock_arrow.global_position = grip - ndir * 0.25
 					nock_arrow.look_at(nock_arrow.global_position - ndir, Vector3.UP)
+				else:
+					nock_arrow.visible = false
 	# Animation state: swings/dodge play their own one-shots; otherwise the archer
 	# uses its dedicated state machine, else block pose / idle-run locomotion.
 	if not attacking and not dodging:
