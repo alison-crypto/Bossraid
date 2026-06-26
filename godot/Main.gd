@@ -27,10 +27,11 @@ const WEAPON_OFFSET := Vector3(0, 0.55, 0)
 # swing animation COMPLETES — so it's telegraphed (dodge/block in time) and a
 # swing cancelled before the end deals no damage.
 const ATTACK_SPEED := 1.4
-# Dodge roll (Space): a quick burst in the move/facing direction with i-frames.
-const DODGE_SPEED := 11.0
-const DODGE_TIME := 0.45
-const DODGE_IFRAMES := 0.5
+# Dodge roll (Space): a roll in the move/facing direction with i-frames. The window is
+# long enough that the roll clip reads as a roll (not a sped-up blur).
+const DODGE_SPEED := 6.5
+const DODGE_TIME := 0.75
+const DODGE_IFRAMES := 0.6
 # Heavy attack (right-click): slower, hits harder. Block (hold Q): cuts incoming
 # damage; a hit in the first PARRY_WINDOW of a block is fully parried. Kick (F):
 # quick poke + knockback. Aim (hold middle-mouse): pulls the camera in to shoot.
@@ -135,6 +136,7 @@ var dodge_dir := Vector3.FORWARD
 var is_archer := false
 var aim_mod: ArcherAimModifier # upper-body pitch so the bow tracks the target's height
 var nock_arrow: Node3D   # arrow drawn on the bow while aiming (points at the target)
+var nock_base_scale := 1.0 # the arrow's fitted scale; grown a bit while charging for feedback
 var nock_hide_t := 0.0   # briefly hide the nocked arrow right after a shot (it "left")
 var rhand_bone := -1     # right (draw) hand bone = the nock anchor
 const AIM_HOLD_T := 0.52 # frame of the draw clip where the bow points dead at the target
@@ -154,6 +156,12 @@ var a_dodge_b := ""    # dodge back
 var a_hit := ""        # flinch one-shot
 var a_death := ""
 var shoot_t := 0.0     # seconds left on the shoot one-shot
+# Charged shot: hold to draw a stronger/faster arrow, release to fire (tap = normal).
+const CHARGE_MAX := 1.1   # seconds to full charge
+const CHARGE_DMG := 2.6   # full-charge damage multiplier
+const CHARGE_SPD := 1.65  # full-charge launch-speed multiplier (longer range)
+var charging := false
+var charge_t := 0.0
 var player_hit_t := 0.0 # seconds left on the hit flinch
 # archer ability runtime: stamina, special meter (0..1), per-skill cooldowns
 var stamina := STAMINA_MAX
@@ -174,6 +182,7 @@ var joy_knob: Control
 var joy_base: Control
 var touch_buttons: Array = []   # [{ frac: Rect2 (0..1 of screen), cb: Callable }]
 var touch_roles := {}           # touch index -> "joy" | "btn"
+var touch_hold := {}            # touch index -> release Callable (hold buttons, e.g. charge)
 var blocking := false
 var block_t := 0.0      # seconds the current block has been held (for parry window)
 var aiming := false
@@ -620,7 +629,7 @@ func _build_touch_ui(root: Control) -> void:
 
 	# action buttons (right side), by screen fraction. Archer kit, else basic.
 	if is_archer:
-		_touch_btn(root, "SHOOT", Rect2(0.84, 0.74, 0.14, 0.18), func(): _do_ranged())
+		_touch_btn(root, "SHOOT", Rect2(0.84, 0.74, 0.14, 0.18), func(): _charge_start(), func(): _charge_release())
 		_touch_btn(root, "POWER", Rect2(0.69, 0.80, 0.12, 0.12), func(): _shot_power())
 		_touch_btn(root, "DODGE", Rect2(0.69, 0.66, 0.12, 0.12), func(): _do_dodge())
 		_touch_btn(root, "SPREAD", Rect2(0.86, 0.58, 0.12, 0.11), func(): _shot_spread())
@@ -636,7 +645,7 @@ func _build_touch_ui(root: Control) -> void:
 		_touch_btn(root, "DODGE", Rect2(0.69, 0.74, 0.12, 0.14), func(): _do_dodge())
 
 
-func _touch_btn(root: Control, label: String, frac: Rect2, cb: Callable) -> void:
+func _touch_btn(root: Control, label: String, frac: Rect2, cb: Callable, rel := Callable()) -> void:
 	var b := Panel.new()
 	b.anchor_left = frac.position.x; b.anchor_top = frac.position.y
 	b.anchor_right = frac.position.x + frac.size.x; b.anchor_bottom = frac.position.y + frac.size.y
@@ -650,7 +659,7 @@ func _touch_btn(root: Control, label: String, frac: Rect2, cb: Callable) -> void
 	lab.add_theme_font_size_override("font_size", 24)
 	b.add_child(lab)
 	root.add_child(b)
-	touch_buttons.append({"frac": frac, "cb": cb})
+	touch_buttons.append({"frac": frac, "cb": cb, "rel": rel})
 
 
 # Raw multitouch: each touch is the joystick (left side) or a button tap. Aiming is
@@ -672,10 +681,15 @@ func _input(event: InputEvent) -> void:
 		if event.pressed:
 			for b in touch_buttons:
 				if (b.frac as Rect2).has_point(f):
-					touch_roles[event.index] = "btn"; (b.cb as Callable).call(); return
+					touch_roles[event.index] = "btn"
+					if (b.rel as Callable).is_valid():
+						touch_hold[event.index] = b.rel # hold button: fire its release on touch-up
+					(b.cb as Callable).call(); return
 			if f.x < 0.42 and f.y > 0.35: # left-ish lower region = move stick
 				touch_roles[event.index] = "joy"; joy_active = true; _joy_set(event.position, vp)
 		else:
+			if touch_hold.has(event.index):
+				(touch_hold[event.index] as Callable).call(); touch_hold.erase(event.index)
 			if touch_roles.get(event.index, "") == "joy":
 				joy_active = false; touch_move = Vector2.ZERO
 				if joy_knob and joy_base: joy_knob.position = joy_base.size * 0.5 - joy_knob.size * 0.5
@@ -796,7 +810,8 @@ func _setup_animation() -> void:
 			var asz: Vector3 = _aabb_of(nock_arrow).size
 			var along: float = max(asz.x, max(asz.y, asz.z))
 			if along > 0.0:
-				nock_arrow.scale = Vector3.ONE * (0.85 / along)
+				nock_base_scale = 0.85 / along
+			nock_arrow.scale = Vector3.ONE * nock_base_scale
 			nock_arrow.visible = false
 		print("Bossraid: archer clips idle=", a_idle, " aim=", a_aim, " run=", a_run, " shoot=", a_shoot, " roll=", a_roll)
 	if idle_anim == "" and list.size() > 0:
@@ -1123,8 +1138,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	# Combat via named actions (keyboard + mouse + gamepad).
 	if not player_dead:
 		if event.is_action_pressed("quick_shot"):
-			if is_archer or aiming: _do_ranged()
+			if is_archer: _charge_start()      # hold to draw a charged shot
+			elif aiming: _do_ranged()
 			else: _do_melee()
+		elif event.is_action_released("quick_shot") and is_archer:
+			_charge_release()                  # release to fire (power scales with hold)
 		elif event.is_action_pressed("power_shot"):
 			_shot_power() if is_archer else _do_heavy()
 		elif event.is_action_pressed("dodge"):
@@ -1174,6 +1192,10 @@ func _physics_process(delta: float) -> void:
 	cam_yaw.rotation.y = yaw
 	cam_pitch.rotation.x = pitch
 	player_invuln = max(0.0, player_invuln - delta)
+	if charging:
+		charge_t = min(charge_t + delta, CHARGE_MAX)
+		if player_dead or dodging or not is_archer:
+			charging = false; charge_t = 0.0
 
 	var fwd := -cam_yaw.global_transform.basis.z
 	var rgt := cam_yaw.global_transform.basis.x
@@ -1230,9 +1252,9 @@ func _physics_process(delta: float) -> void:
 	if model:
 		var face_dir: Vector3
 		if dodging:
-			face_dir = dodge_dir # dodge rolls toward the joystick direction
+			face_dir = dodge_dir # roll tumbles in the dodge direction
 		elif is_archer and aim_locked and _target_valid():
-			# locked on: always face the target so the bow points at it (any platform)
+			# locked on: face the target so the bow points at it (any platform)
 			var tb := locked_target.global_position - player.global_position; tb.y = 0
 			face_dir = tb.normalized() if tb.length() > 0.3 else fwd
 		elif is_archer and aiming:
@@ -1273,6 +1295,9 @@ func _physics_process(delta: float) -> void:
 					ndir = ndir.normalized()
 					nock_arrow.global_position = grip - ndir * 0.25
 					nock_arrow.look_at(nock_arrow.global_position - ndir, Vector3.UP)
+					# grow the arrow a bit while charging so the draw reads as building power
+					var cgrow := 1.0 + (charge_t / CHARGE_MAX) * 0.6 if charging else 1.0
+					nock_arrow.scale = Vector3.ONE * nock_base_scale * cgrow
 				else:
 					nock_arrow.visible = false
 	# Animation state: swings/dodge play their own one-shots; otherwise the archer
@@ -2014,22 +2039,13 @@ func _do_dodge() -> void:
 	dodge_t = DODGE_TIME
 	_cancel_swing() # dodge cancels any swing (active-frames rule)
 	player_invuln = max(player_invuln, dodge_iframes)
-	# Pick a directional dodge clip and play it FAST enough to actually read within
-	# the short dodge window (the long roll otherwise only shows its standing wind-up
-	# -> looks like a slide). Direction is relative to where the character faces.
-	var clip := dodge_anim
-	if is_archer:
-		var f := dodge_dir.dot(fwd)
-		var r := dodge_dir.dot(rgt)
-		if absf(r) > absf(f) and (a_strafe_l != "" or a_strafe_r != ""):
-			clip = a_dodge_r if r > 0.0 else a_dodge_l
-		elif f < -0.2 and a_dodge_b != "":
-			clip = a_dodge_b
-		else:
-			clip = a_roll
+	# Always the ROLL (Alison's call). The body faces dodge_dir, so the forward-roll clip
+	# tumbles in the dodge direction for any input (mid-tumble there's no "facing" to read).
+	# Played at a readable speed (no 5x blur).
+	var clip := a_roll if is_archer and a_roll != "" else dodge_anim
 	if clip != "" and anim and anim.has_animation(clip):
 		var ln: float = anim.get_animation(clip).length
-		var spd: float = clampf(ln / (DODGE_TIME * 0.92), 1.0, 8.0) # play the FULL roll within the dodge window (don't cut it short)
+		var spd: float = clampf(ln / (DODGE_TIME * 0.95), 1.0, 4.5) # readable, fits the window
 		anim.play(clip, 0.05, spd)
 		cur_anim = clip
 
@@ -2131,6 +2147,32 @@ func _cycle_target(_dir: int) -> void:
 
 
 # Quick shot (LMB).
+# Charged shot. Press = start drawing (charge), release = fire one arrow whose power
+# scales with how long it was held. Non-archers fire immediately (no bow draw).
+func _charge_start() -> void:
+	if player_dead:
+		return
+	if not is_archer:
+		_do_ranged(); return
+	if ranged_cd > 0.0 or stamina < STA_QUICK:
+		return
+	charging = true
+	charge_t = 0.0
+
+func _charge_release() -> void:
+	if not charging:
+		return
+	charging = false
+	var p: float = clampf(charge_t / CHARGE_MAX, 0.0, 1.0)
+	charge_t = 0.0
+	if ranged_cd > 0.0 or player_dead or stamina < STA_QUICK:
+		return
+	ranged_cd = lerpf(RANGED_CD, RANGED_CD * 1.6, p)
+	_play_shoot()
+	stamina -= lerpf(STA_QUICK, STA_POWER, p); sta_regen_t = STA_REGEN_DELAY
+	_fire_arrow(0.0, lerpf(1.0, CHARGE_DMG, p), lerpf(1.0, CHARGE_SPD, p), false, false)
+
+
 func _do_ranged() -> void:
 	if ranged_cd > 0.0 or player_dead:
 		return
