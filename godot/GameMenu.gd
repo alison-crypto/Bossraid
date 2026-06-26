@@ -40,15 +40,46 @@ func _ready() -> void:
 	title.position = Vector2(24, 14)
 	panel.add_child(title)
 
-	var closeb := _button("✕  (Esc)", close)
-	closeb.position = Vector2(760, 14)
-	closeb.size = Vector2(120, 36)
+	var closeb := _button("✕", close)
+	closeb.position = Vector2(836, 14)
+	closeb.size = Vector2(44, 36)
 	panel.add_child(closeb)
+
+	# Tabs (so touch users can switch windows without the C/I/K keys).
+	var tabs := [["Stats", "stats"], ["Inventory", "inv"], ["Skills", "skills"]]
+	for i in tabs.size():
+		var which: String = tabs[i][1]
+		var tb := _button(tabs[i][0], func(): open(which))
+		tb.position = Vector2(150 + i * 120, 14)
+		tb.size = Vector2(112, 36)
+		panel.add_child(tb)
 
 	content = VBoxContainer.new()
 	content.position = Vector2(24, 64)
 	content.add_theme_constant_override("separation", 8)
 	panel.add_child(content)
+
+
+# Touch: route a tap to whatever menu Button it lands on (Control buttons don't get
+# touch taps with mouse-from-touch off). Runs while paused (PROCESS_MODE_ALWAYS).
+func _input(event: InputEvent) -> void:
+	if open_window == "" or not (event is InputEventScreenTouch and event.pressed):
+		return
+	var hit := _btn_at(panel, event.position)
+	if hit:
+		hit.pressed.emit()
+		get_viewport().set_input_as_handled()
+
+
+func _btn_at(node: Node, pos: Vector2) -> Button:
+	for i in range(node.get_child_count() - 1, -1, -1):
+		var c := node.get_child(i)
+		var r := _btn_at(c, pos)
+		if r:
+			return r
+		if c is Button and (c as Button).visible and (c as Button).get_global_rect().has_point(pos):
+			return c
+	return null
 
 
 func _unhandled_input(event: InputEvent) -> void:
