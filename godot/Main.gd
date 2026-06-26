@@ -306,6 +306,7 @@ var hud_hint: Label
 var hud_stamina_fill: ColorRect
 var hud_special_fill: ColorRect
 var hud_cd: Label
+var minimap: Minimap
 var menu: GameMenu
 
 
@@ -601,6 +602,14 @@ func _build_hud() -> void:
 	hud_hint.modulate = Color(0.8, 0.85, 0.95)
 	hud_hint.text = "LMB Shot  RMB Power  MMB Aim  1 Spread  2 Volley  3 Explosive  4 Pierce  Q Deflect  X Storm  Space Dodge" if is_archer else "[C] Stats   [I] Inventory   [K] Skills"
 	root.add_child(hud_hint)
+
+	# Minimap radar (top-right): player centred, boss/dummy as blips (Milestone D).
+	minimap = Minimap.new()
+	minimap.anchor_left = 1.0; minimap.anchor_right = 1.0
+	minimap.offset_left = -176; minimap.offset_right = -24
+	minimap.offset_top = 24; minimap.offset_bottom = 176
+	minimap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(minimap)
 
 	# On web/mobile, add the on-screen touch controls (additive to keyboard/mouse).
 	if OS.has_feature("web") or OS.has_feature("mobile"):
@@ -2406,6 +2415,11 @@ func _update_gear_hud() -> void:
 
 
 func _update_hud() -> void:
+	if minimap and player:
+		var b: Array = [{"pos": dummy_pos, "color": Color(0.82, 0.8, 0.4), "r": 4.0}]
+		if boss_root and not boss_dead:
+			b.append({"pos": boss_root.global_position, "color": Color(0.95, 0.3, 0.28), "r": 6.0})
+		minimap.set_radar(player.global_position, -cam_yaw.global_transform.basis.z, b)
 	if hud_player_fill:
 		hud_player_fill.size = Vector2(296.0 * (player_hp / player_max), 20)
 	if hud_boss_fill:
