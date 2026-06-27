@@ -23,6 +23,7 @@ config/icon="res://icon.svg"
 
 GameState="*res://GameState.gd"
 Controls="*res://Controls.gd"
+Sfx="*res://AudioManager.gd"
 
 [display]
 
