@@ -111,6 +111,11 @@ var model: Node3D
 var cam_yaw: Node3D
 var cam_pitch: Node3D
 var cam: Camera3D
+var cam_shake_off := Vector3.ZERO  # current frame's screen-shake offset on the cam boom
+var shake_t := 0.0                 # seconds left on the active shake
+var shake_mag := 0.0               # current shake amplitude (metres)
+var shake_dur := 0.22              # duration of the active shake (for decay)
+var _hitstop_token := 0            # guards overlapping hit-stops (latest owns the restore)
 var anim: AnimationPlayer
 var yaw := 0.0
 var pitch := -0.2
@@ -1206,7 +1211,10 @@ func _physics_process(delta: float) -> void:
 	cam_pitch.rotation.x = pitch
 	player_invuln = max(0.0, player_invuln - delta)
 	if charging:
+		var was_ct := charge_t
 		charge_t = min(charge_t + delta, CHARGE_MAX)
+		if was_ct < 0.12 and charge_t >= 0.12:
+			Sfx.play("bow_draw", -7.0, 0.04) # creak once a real draw begins (taps skip it)
 		if player_dead or dodging or not is_archer:
 			charging = false; charge_t = 0.0
 
@@ -1230,7 +1238,16 @@ func _physics_process(delta: float) -> void:
 	aiming = (Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE) or touch_enabled) and not dodging and not player_dead
 	# Aim cam sits over the LEFT shoulder (-X): the bow is held in the left hand, so a
 	# right-shoulder cam pushed it off the target; left-shoulder lines the bow up on it.
+	# Strip last frame's shake first so the boom lerps on its true rest position, then
+	# re-add a decaying random offset for screen-shake (slam impacts, big hits).
+	cam.position -= cam_shake_off
 	cam.position = cam.position.lerp(Vector3(-0.7, 0.1, 2.3) if aiming else cam_rest, 0.2)
+	cam_shake_off = Vector3.ZERO
+	if shake_t > 0.0:
+		shake_t -= delta
+		var amt: float = shake_mag * clampf(shake_t / maxf(0.01, shake_dur), 0.0, 1.0)
+		cam_shake_off = Vector3(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0), randf_range(-0.4, 0.4)) * amt
+	cam.position += cam_shake_off
 
 	# Block (hold Q): raising guard cancels an in-progress swing (active-frames
 	# rule). Can't block mid-dodge/aim. block_t feeds the parry window.
@@ -1491,6 +1508,7 @@ func _boss_phase_check() -> void:
 		boss_state = "recover"; boss_t = PHASE_STAGGER; boss_cd = 0.0
 		boss_stagger_t = PHASE_STAGGER + 0.8 # punish window: boss takes bonus damage
 		slam_ring.visible = false
+		_add_shake(0.26, 0.5) # phase-break roar rumble
 		if boss_roar != "":
 			_boss_play(boss_roar)
 		_banner("PHASE %d — STAGGER!" % ph)
@@ -1528,6 +1546,7 @@ func _boss_choose(dist: float) -> void:
 			boss_windup = 1.15 * wm; _telegraph(boss_root.global_position, QUAKE_R)
 			_boss_play(boss_quake if boss_quake != "" else boss_attack)
 	boss_state = "windup"; boss_t = boss_windup
+	Sfx.play("boss_windup", -4.0, 0.03)
 
 
 func _telegraph(center: Vector3, radius: float) -> void:
@@ -1546,17 +1565,24 @@ func _player_within(center: Vector3, r: float) -> bool:
 # Resolve the active pattern's effect.
 func _boss_strike(dmg_mult: float) -> void:
 	slam_mat.albedo_color = Color(1, 0.55, 0.2, 0.85)
+	if boss_kind in ["smash", "slam", "quake"]:
+		Sfx.play("boss_slam", -2.0, 0.05)
+	# Ground-impact shake fires on the LAND regardless of whether it connects — sells the
+	# weight even when the player dodges clean. _damage_player adds its own jolt on a hit.
 	match boss_kind:
 		"smash":
+			_add_shake(0.22, 0.3)
 			if _player_within(boss_root.global_position, SMASH_R):
 				_damage_player(int(round(SMASH_DMG * dmg_mult)))
 			_spawn_shock(boss_root.global_position, SMASH_R)
 			boss_state = "recover"; boss_t = 0.55
 		"slam":
+			_add_shake(0.16, 0.26)
 			if _player_within(boss_tele_center, SLAM_RADIUS):
 				_damage_player(int(round(SLAM_DMG * dmg_mult)))
 			boss_state = "recover"; boss_t = 0.55
 		"quake":
+			_add_shake(0.32, 0.45)
 			_damage_player(int(round(QUAKE_DMG * dmg_mult))) # i-frames (dodge) skip it
 			_spawn_shock(boss_root.global_position, QUAKE_R)
 			boss_state = "recover"; boss_t = 0.9
@@ -1611,6 +1637,25 @@ func _update_rocks(delta: float) -> void:
 			rk.mesh.queue_free(); boss_rocks.remove_at(i)
 
 
+# Screen-shake: kick the camera boom; bigger/longer shakes win over weaker active ones.
+func _add_shake(mag: float, dur := 0.22) -> void:
+	if mag >= shake_mag or shake_t <= 0.0:
+		shake_mag = mag
+		shake_dur = dur
+		shake_t = dur
+
+
+# Hit-stop: a brief near-freeze for impact weight. Uses a real-time timer (ignore_time_scale)
+# so the restore fires regardless of the slowed clock; a token guards overlapping calls.
+func _hit_stop(dur := 0.06, scl := 0.05) -> void:
+	_hitstop_token += 1
+	var my := _hitstop_token
+	Engine.time_scale = scl
+	await get_tree().create_timer(dur, true, false, true).timeout
+	if my == _hitstop_token:
+		Engine.time_scale = 1.0
+
+
 func _damage_player(dmg: int) -> void:
 	if player_invuln > 0.0 or player_dead:
 		if deflect_t > 0.0:
@@ -1621,12 +1666,16 @@ func _damage_player(dmg: int) -> void:
 			# Parry: a hit caught just as you raise guard — fully negated, boss reels.
 			boss_flash = 0.25
 			player_invuln = 0.4
+			_add_shake(0.07, 0.16); _hit_stop(0.04, 0.12) # crisp parry pop
+			Sfx.play("deflect_ping", -3.0, 0.04)
 			return
 		dmg = int(round(dmg * block_reduction)) # blocked: chip damage only
 	var taken: int = max(0, dmg - player_def) # equipment defence subtracts directly
 	player_hp = max(0.0, player_hp - taken)
 	run_dmg += taken # track for the run grade
 	player_invuln = 0.7
+	_add_shake(0.18, 0.28); _hit_stop(0.06, 0.05) # took a hit -> jolt + brief freeze
+	Sfx.play("hurt", -3.0, 0.06)
 	if is_archer:
 		special = min(1.0, special + SPECIAL_GAIN_TAKEN) # taking hits also builds the meter
 	if player_hp <= 0.0:
@@ -1637,6 +1686,7 @@ func _damage_player(dmg: int) -> void:
 
 func _player_die() -> void:
 	player_dead = true
+	_add_shake(0.35, 0.6); _hit_stop(0.12, 0.05)
 	_banner("DEFEATED")
 	await get_tree().create_timer(1.6).timeout
 	player.global_position = player_spawn
@@ -1654,6 +1704,7 @@ func _hit_boss(dmg: int) -> void:
 	if boss_stagger_t > 0.0:
 		dmg = int(round(dmg * 1.6))
 		boss_flash = 0.2
+		_add_shake(0.12, 0.18); _hit_stop(0.05, 0.08) # punish-window hit lands heavy
 	boss_hp = max(0.0, boss_hp - dmg)
 	boss_flash = 0.12
 	_spawn_damage(boss_root.global_position + Vector3(0, 4.6, 0), dmg)
@@ -1682,6 +1733,8 @@ func _boss_die() -> void:
 		return
 	run_scored = true
 	boss_dead = true
+	_add_shake(0.4, 0.7); _hit_stop(0.15, 0.04) # kill slam
+	Sfx.play("victory", 0.0, 0.0)
 	boss_root.visible = false
 	slam_ring.visible = false
 	GameState.grant_boss_reward()
@@ -2049,6 +2102,7 @@ func _do_dodge() -> void:
 		d += rgt * touch_move.x - fwd * touch_move.y
 	dodge_dir = d.normalized() if d.length() > 0.1 else fwd
 	run_dodges += 1
+	Sfx.play("dodge_whoosh", -5.0, 0.07)
 	dodging = true
 	dodge_t = DODGE_TIME
 	_cancel_swing() # dodge cancels any swing (active-frames rule)
@@ -2090,6 +2144,7 @@ func td_dot(v: Vector3, aim: Vector3) -> float:
 
 
 func _play_shoot() -> void:
+	Sfx.play("bow_release", -3.0, 0.06)
 	if is_archer and a_shoot != "" and anim and anim.has_animation(a_shoot):
 		shoot_t = anim.get_animation(a_shoot).length
 
@@ -2259,6 +2314,7 @@ func _skill_deflect() -> void:
 	var dt := DEFLECT_TIME + 0.05 * GameState.skill_rank("deflect")
 	cd_deflect = CD_DEFLECT; deflect_t = dt
 	player_invuln = max(player_invuln, dt)
+	Sfx.play("deflect_ping", -4.0, 0.05)
 
 
 # Arrow Storm — needs a full special meter (X).
@@ -2313,6 +2369,7 @@ func _explode(pos: Vector3) -> void:
 # tween, the same compat-safe tech as _explode (no GPU/CPU particle system).
 func _impact_fx(pos: Vector3, power: float) -> void:
 	var p: float = clampf(power, 1.0, 2.8)
+	Sfx.play("arrow_impact", -6.0, 0.12)
 	# central flash
 	var s := MeshInstance3D.new()
 	var sm := SphereMesh.new(); sm.radius = 0.13; sm.height = 0.26; s.mesh = sm
